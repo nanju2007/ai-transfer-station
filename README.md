@@ -7,11 +7,11 @@
 │   ├── middleware/         # 中间件
 │   ├── model/             # 数据模型
 │   ├── service/           # 业务服务
-│   ├── queue/redis/       # Redis队列消费者
-│   ├── relay/             # AI中转核心
+│   ├── queue/redis/       # Redis队列
+│   ├── relay/             # 核心
 │   └── view/              # 视图模板
 ├── config/                # 配置文件
-├── database/              # SQL脚本
+├── database/              # 完整的SQL
 ├── public/                # 静态资源
 └── runtime/               # 运行时文件
 ```
