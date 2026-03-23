@@ -1,0 +1,14 @@
+<?php
+use app\model\Option;
+$_footerSiteName = Option::getOption('site_name', 'AI中转站');
+$_footerContent = Option::getOption('site_footer', '');
+?>
+<footer style="background:#fff;border-top:1px solid #e7e7e7;padding:24px 0;text-align:center;color:#999;font-size:13px;margin-top:auto;">
+    <?php if ($_footerContent): ?>
+        <?= $_footerContent ?>
+    <?php else: ?>
+        <p><?= htmlspecialchars($_footerSiteName) ?> - 稳定可靠的 AI API 中转服务</p>
+    <?php endif; ?>
+</footer>
+</body>
+</html>

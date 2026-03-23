@@ -1,0 +1,299 @@
+<?php $currentPage = 'logs'; $pageTitle = '日志管理'; ?>
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 统计卡片 -->
+    <div class="stat-cards">
+        <div class="stat-card">
+            <div class="label">总请求数</div>
+            <div class="value">{{ stats.total_requests }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总Token数</div>
+            <div class="value">{{ formatNumber(stats.total_tokens) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总费用(元)</div>
+            <div class="value">¥{{ Number(stats.total_cost || 0).toFixed(2) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">今日请求数</div>
+            <div class="value">{{ stats.today_requests }}</div>
+        </div>
+    </div>
+
+    <!-- 图表区域 -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+        <div class="content-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                <span style="font-size:14px;font-weight:500;">请求趋势</span>
+                <t-radio-group v-model="chartGroupBy" variant="default-filled" size="small" @change="fetchStatistics">
+                    <t-radio-button value="hour">按小时</t-radio-button>
+                    <t-radio-button value="day">按天</t-radio-button>
+                </t-radio-group>
+            </div>
+            <div id="trendChart" style="height:260px;"></div>
+        </div>
+        <div class="content-card">
+            <div style="font-size:14px;font-weight:500;margin-bottom:12px;">模型使用占比</div>
+            <div id="modelChart" style="height:260px;"></div>
+        </div>
+    </div>
+
+    <!-- 筛选工具栏 -->
+    <div class="toolbar">
+        <t-input v-model="filter.user_id" placeholder="用户ID" style="width:120px;" clearable />
+        <t-input v-model="filter.model_name" placeholder="模型名称" style="width:180px;" clearable />
+        <t-date-range-picker v-model="filter.dateRange" style="width:280px;" clearable />
+        <t-button theme="primary" @click="fetchList">搜索</t-button>
+        <div class="spacer"></div>
+        <t-button theme="danger" @click="openCleanup">清理日志</t-button>
+    </div>
+
+    <!-- 表格 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #cached_tokens="{ row }">
+                <t-tooltip v-if="row.cached_tokens || row.cache_creation_tokens || row.cache_read_tokens" :content="'创建:' + (row.cache_creation_tokens || 0) + ' / 读取:' + (row.cache_read_tokens || 0)">
+                    <t-tag theme="success" variant="light" size="small">{{ row.cached_tokens || row.cache_read_tokens || 0 }}</t-tag>
+                </t-tooltip>
+                <span v-else style="color:#999;">-</span>
+            </template>
+            <template #cost="{ row }">
+                ¥{{ row.cost ? Number(row.cost).toFixed(6) : '0.000000' }}
+            </template>
+            <template #duration="{ row }">
+                <span v-if="row.duration">{{ row.duration }}ms</span>
+                <span v-else-if="row.use_time">{{ row.use_time }}ms</span>
+                <span v-else style="color:#999;">-</span>
+            </template>
+            <template #ttft="{ row }">
+                <span v-if="row.ttft">{{ row.ttft }}ms</span>
+                <span v-else style="color:#999;">-</span>
+            </template>
+            <template #type="{ row }">
+                <t-tag v-if="row.type === 1" theme="primary" variant="light">消费</t-tag>
+                <t-tag v-else-if="row.type === 2" theme="success" variant="light">充值</t-tag>
+                <t-tag v-else theme="default" variant="light">其他</t-tag>
+            </template>
+            <template #operation="{ row }">
+                <t-popconfirm content="确定删除该日志？" @confirm="handleDelete(row)">
+                    <t-link theme="danger">删除</t-link>
+                </t-popconfirm>
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper />
+        </div>
+    </div>
+
+    <!-- 清理日志对话框 -->
+    <t-dialog v-model:visible="cleanupVisible" header="清理日志" width="420px" :confirm-on-enter="false"
+        @confirm="handleCleanup" :confirm-btn="{ loading: submitting }">
+        <t-form :data="cleanupForm" label-width="120px">
+            <t-form-item label="清理N天前日志">
+                <t-input-number v-model="cleanupForm.days" :min="1" :max="365" style="width:100%;" />
+            </t-form-item>
+        </t-form>
+        <div style="color:#999;font-size:12px;margin-top:8px;">将删除 {{ cleanupForm.days }} 天前的所有日志记录，此操作不可恢复。</div>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted, nextTick } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const submitting = ref(false);
+            const tableData = ref([]);
+            const cleanupVisible = ref(false);
+            const chartGroupBy = ref('hour');
+
+            const pagination = reactive({ current: 1, total: 0, pageSize: 15 });
+            const filter = reactive({ user_id: '', model_name: '', dateRange: [] });
+            const cleanupForm = reactive({ days: 30 });
+
+            const stats = reactive({
+                total_requests: 0,
+                total_tokens: 0,
+                total_cost: 0,
+                today_requests: 0
+            });
+
+            var trendChartInstance = null;
+            var modelChartInstance = null;
+
+            const columns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'user_id', title: '用户', width: 70 },
+                { colKey: 'username', title: '用户名', width: 100 },
+                { colKey: 'token_name', title: '令牌名', width: 110 },
+                { colKey: 'model_name', title: '模型', width: 180 },
+                { colKey: 'prompt_tokens', title: '输入Token', width: 90 },
+                { colKey: 'completion_tokens', title: '输出Token', width: 90 },
+                { colKey: 'cached_tokens', title: '缓存Token', width: 90, cell: 'cached_tokens' },
+                { colKey: 'cost', title: '费用(元)', width: 100, cell: 'cost' },
+                { colKey: 'duration', title: '总用时', width: 80, cell: 'duration' },
+                { colKey: 'ttft', title: '首字时间', width: 80, cell: 'ttft' },
+                { colKey: 'ip', title: 'IP', width: 120 },
+                { colKey: 'type', title: '类型', width: 80, cell: 'type' },
+                { colKey: 'created_at', title: '时间', width: 170 },
+                { colKey: 'operation', title: '操作', width: 80, cell: 'operation', fixed: 'right' }
+            ];
+
+            function formatNumber(num) {
+                if (!num) return '0';
+                if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+                if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+                return String(num);
+            }
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (filter.user_id) params.user_id = filter.user_id;
+                if (filter.model_name) params.model_name = filter.model_name;
+                if (filter.dateRange && filter.dateRange.length === 2) {
+                    params.start_date = filter.dateRange[0];
+                    params.end_date = filter.dateRange[1];
+                }
+
+                axios.get('/api/admin/logs', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                        pagination.total = res.data.data.total;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function fetchStatistics() {
+                var today = new Date().toISOString().slice(0, 10);
+                var weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+
+                axios.get('/api/admin/logs/statistics', {
+                    params: { start_date: weekAgo, end_date: today, group_by: chartGroupBy.value }
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        var d = res.data.data;
+                        stats.total_requests = d.total_requests || 0;
+                        stats.total_tokens = d.total_tokens || 0;
+                        stats.total_cost = d.total_cost || 0;
+
+                        // 计算今日请求
+                        var timeStats = d.time_stats || [];
+                        var todayCount = 0;
+                        timeStats.forEach(function(item) {
+                            if (item.time && item.time.startsWith(today)) {
+                                todayCount += Number(item.count || 0);
+                            }
+                        });
+                        stats.today_requests = todayCount;
+
+                        nextTick(function() {
+                            renderTrendChart(timeStats);
+                            renderModelChart(d.model_stats || []);
+                        });
+                    }
+                });
+            }
+
+            function renderTrendChart(timeStats) {
+                var el = document.getElementById('trendChart');
+                if (!el) return;
+                if (trendChartInstance) trendChartInstance.dispose();
+                trendChartInstance = echarts.init(el);
+
+                var times = timeStats.map(function(item) { return item.time; });
+                var counts = timeStats.map(function(item) { return item.count; });
+
+                trendChartInstance.setOption({
+                    tooltip: { trigger: 'axis' },
+                    grid: { left: 50, right: 20, top: 20, bottom: 30 },
+                    xAxis: {
+                        type: 'category', data: times,
+                        axisLabel: { fontSize: 11, rotate: chartGroupBy.value === 'hour' ? 45 : 0 }
+                    },
+                    yAxis: { type: 'value' },
+                    series: [{ data: counts, type: 'line', smooth: true, areaStyle: { opacity: 0.15 }, itemStyle: { color: '#1890ff' } }]
+                });
+            }
+
+            function renderModelChart(modelStats) {
+                var el = document.getElementById('modelChart');
+                if (!el) return;
+                if (modelChartInstance) modelChartInstance.dispose();
+                modelChartInstance = echarts.init(el);
+
+                var data = modelStats.slice(0, 10).map(function(item) {
+                    return { name: item.model_name, value: item.count };
+                });
+
+                modelChartInstance.setOption({
+                    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+                    series: [{
+                        type: 'pie', radius: ['35%', '65%'], center: ['50%', '55%'],
+                        data: data,
+                        label: { fontSize: 11 },
+                        itemStyle: { borderRadius: 4, borderColor: '#fff', borderWidth: 2 }
+                    }]
+                });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            function handleDelete(row) {
+                axios.delete('/api/admin/logs/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            function openCleanup() {
+                cleanupForm.days = 30;
+                cleanupVisible.value = true;
+            }
+
+            function handleCleanup() {
+                submitting.value = true;
+                axios.delete('/api/admin/logs/cleanup', { params: { days: cleanupForm.days } }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('清理成功，删除 ' + (res.data.data.deleted || 0) + ' 条日志');
+                        cleanupVisible.value = false;
+                        fetchList();
+                        fetchStatistics();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '清理失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            onMounted(function() {
+                fetchList();
+                fetchStatistics();
+            });
+
+            return {
+                loading, submitting, tableData, columns, filter, chartGroupBy,
+                pagination, stats, cleanupVisible, cleanupForm,
+                formatNumber, fetchList, fetchStatistics, onPageChange, handleDelete,
+                openCleanup, handleCleanup
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

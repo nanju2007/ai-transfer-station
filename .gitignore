@@ -1,0 +1,12 @@
+/vendor/
+/runtime/
+*.log
+.env
+/.idea/
+/.vscode/
+/tests/tmp/
+/tests/.phpunit.result.cache
+.phpunit.result.cache
+.DS_Store
+Thumbs.db
+composer.lock

@@ -1,0 +1,240 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <t-select v-model="searchModelId" placeholder="按模型筛选" style="width: 240px;" clearable filterable @change="fetchList">
+            <t-option v-for="m in modelList" :key="m.id" :value="m.id" :label="m.model_name" />
+        </t-select>
+        <t-button theme="primary" @click="fetchList">搜索</t-button>
+        <div class="spacer"></div>
+        <t-button theme="primary" @click="openCreate">新建计费规则</t-button>
+    </div>
+
+    <!-- 表格 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #model_name="{ row }">
+                {{ row.model ? row.model.model_name : '-' }}
+            </template>
+            <template #billing_type="{ row }">
+                <t-tag v-if="row.billing_type === 1" theme="primary" variant="light">按量计费</t-tag>
+                <t-tag v-else theme="warning" variant="light">按次计费</t-tag>
+            </template>
+            <template #status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">启用</t-tag>
+                <t-tag v-else theme="danger" variant="light">禁用</t-tag>
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openEdit(row)">编辑</t-link>
+                    <t-popconfirm content="确定删除该计费规则？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper />
+        </div>
+    </div>
+
+    <!-- 新建/编辑对话框 -->
+    <t-dialog v-model:visible="dialogVisible" :header="dialogTitle" width="600px" :confirm-on-enter="false"
+        @confirm="handleSubmit" :confirm-btn="{ loading: submitting }">
+        <t-form :data="formData" label-width="110px">
+            <t-form-item label="模型" name="model_id" v-if="!editingId">
+                <t-select v-model="formData.model_id" placeholder="请选择模型" filterable>
+                    <t-option v-for="m in modelList" :key="m.id" :value="m.id" :label="m.model_name" />
+                </t-select>
+            </t-form-item>
+            <t-form-item label="模型" v-if="editingId">
+                <t-input :value="editingModelName" disabled />
+            </t-form-item>
+            <t-form-item label="计费方式" name="billing_type">
+                <t-radio-group v-model="formData.billing_type">
+                    <t-radio :value="1">按量计费</t-radio>
+                    <t-radio :value="2">按次计费</t-radio>
+                </t-radio-group>
+            </t-form-item>
+            <template v-if="formData.billing_type === 1">
+                <t-form-item label="输入价格" name="input_price" help="每1K tokens价格">
+                    <t-input-number v-model="formData.input_price" :min="0" :step="0.001" :decimal-places="4" style="width: 100%;" />
+                </t-form-item>
+                <t-form-item label="输出价格" name="output_price" help="每1K tokens价格">
+                    <t-input-number v-model="formData.output_price" :min="0" :step="0.001" :decimal-places="4" style="width: 100%;" />
+                </t-form-item>
+                <t-form-item label="缓存输入比例" name="cache_input_ratio" help="缓存命中时的价格倍率">
+                    <t-input-number v-model="formData.cache_input_ratio" :min="0" :max="1" :step="0.1" :decimal-places="2" style="width: 100%;" />
+                </t-form-item>
+                <t-form-item label="缓存独立计费" name="cache_enabled">
+                    <t-switch v-model="formData.cache_enabled" :custom-value="[1, 0]"></t-switch>
+                    <span style="margin-left:8px;color:#999;font-size:12px;">开启后可分别设置缓存创建和读取价格</span>
+                </t-form-item>
+                <template v-if="formData.cache_enabled === 1">
+                    <t-form-item label="缓存创建价格" name="cache_creation_price" help="缓存创建价格（元/百万Token）">
+                        <t-input-number v-model="formData.cache_creation_price" :min="0" :step="0.001" :decimal-places="4" style="width: 100%;" />
+                    </t-form-item>
+                    <t-form-item label="缓存读取价格" name="cache_read_price" help="缓存读取价格（元/百万Token）">
+                        <t-input-number v-model="formData.cache_read_price" :min="0" :step="0.001" :decimal-places="4" style="width: 100%;" />
+                    </t-form-item>
+                </template>
+            </template>
+            <template v-if="formData.billing_type === 2">
+                <t-form-item label="每次价格" name="per_request_price">
+                    <t-input-number v-model="formData.per_request_price" :min="0" :step="0.01" :decimal-places="4" style="width: 100%;" />
+                </t-form-item>
+            </template>
+            <t-form-item label="最低消费" name="min_charge">
+                <t-input-number v-model="formData.min_charge" :min="0" :step="0.001" :decimal-places="4" style="width: 100%;" />
+            </t-form-item>
+            <t-form-item label="货币" name="currency">
+                <t-select v-model="formData.currency">
+                    <t-option value="CNY" label="CNY (人民币)" />
+                    <t-option value="USD" label="USD (美元)" />
+                </t-select>
+            </t-form-item>
+            <t-form-item label="状态" name="status">
+                <t-select v-model="formData.status">
+                    <t-option :value="1" label="启用" />
+                    <t-option :value="2" label="禁用" />
+                </t-select>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const submitting = ref(false);
+            const tableData = ref([]);
+            const searchModelId = ref(null);
+            const dialogVisible = ref(false);
+            const dialogTitle = ref('新建计费规则');
+            const editingId = ref(null);
+            const editingModelName = ref('');
+            const modelList = ref([]);
+
+            const pagination = reactive({ current: 1, total: 0, pageSize: 15 });
+
+            var defaultForm = {
+                model_id: null, billing_type: 1, input_price: 0, output_price: 0,
+                per_request_price: 0, min_charge: 0, cache_input_ratio: 1.0,
+                cache_enabled: 0, cache_creation_price: 0, cache_read_price: 0,
+                currency: 'CNY', status: 1
+            };
+            const formData = reactive({ ...defaultForm });
+
+            const columns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'model_name', title: '模型', width: 200, cell: 'model_name' },
+                { colKey: 'billing_type', title: '计费方式', width: 100, cell: 'billing_type' },
+                { colKey: 'input_price', title: '输入价格', width: 110 },
+                { colKey: 'output_price', title: '输出价格', width: 110 },
+                { colKey: 'per_request_price', title: '每次价格', width: 110 },
+                { colKey: 'min_charge', title: '最低消费', width: 100 },
+                { colKey: 'currency', title: '货币', width: 80 },
+                { colKey: 'status', title: '状态', width: 80, cell: 'status' },
+                { colKey: 'operation', title: '操作', width: 140, cell: 'operation', fixed: 'right' }
+            ];
+
+            function fetchModelList() {
+                axios.get('/api/admin/models', { params: { per_page: 200 } }).then(function(res) {
+                    if (res.data.code === 0) {
+                        modelList.value = res.data.data.list;
+                    }
+                });
+            }
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (searchModelId.value) params.model_id = searchModelId.value;
+
+                axios.get('/api/admin/pricing', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                        pagination.total = res.data.data.total;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            function openCreate() {
+                Object.assign(formData, defaultForm);
+                editingId.value = null;
+                editingModelName.value = '';
+                dialogTitle.value = '新建计费规则';
+                dialogVisible.value = true;
+            }
+
+            function openEdit(row) {
+                editingId.value = row.id;
+                editingModelName.value = row.model ? row.model.model_name : '';
+                dialogTitle.value = '编辑计费规则';
+                Object.keys(defaultForm).forEach(function(k) {
+                    formData[k] = row[k] !== undefined && row[k] !== null ? row[k] : defaultForm[k];
+                });
+                dialogVisible.value = true;
+            }
+
+            function handleSubmit() {
+                submitting.value = true;
+                var data = { ...formData };
+                var promise;
+                if (editingId.value) {
+                    promise = axios.put('/api/admin/pricing/' + editingId.value, data);
+                } else {
+                    promise = axios.post('/api/admin/pricing', data);
+                }
+                promise.then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(editingId.value ? '更新成功' : '创建成功');
+                        dialogVisible.value = false;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            function handleDelete(row) {
+                axios.delete('/api/admin/pricing/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            onMounted(function() {
+                fetchModelList();
+                fetchList();
+            });
+
+            return {
+                loading, submitting, tableData, columns, searchModelId, modelList,
+                pagination, dialogVisible, dialogTitle, formData, editingId, editingModelName,
+                fetchList, onPageChange, openCreate, openEdit, handleSubmit, handleDelete
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

@@ -1,0 +1,69 @@
+<?php
+use app\model\Option;
+$siteName = Option::getOption('site_name', 'AI中转站');
+$siteLogo = Option::getOption('site_logo', '');
+?>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?= htmlspecialchars($siteName) ?></title>
+    <link rel="stylesheet" href="/assets/css/tdesign.min.css">
+    <link rel="stylesheet" href="/assets/css/custom.css">
+    <script src="/assets/js/vue.global.prod.js"></script>
+    <script src="/assets/js/tdesign.min.js"></script>
+    <script src="/assets/js/axios.min.js"></script>
+    <script src="/assets/js/common.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f6f7; padding-top: 56px; }
+        .top-nav { height: 56px; background: #fff; border-bottom: 1px solid #e7e7e7; display: flex; align-items: center; padding: 0 24px; position: fixed; top: 0; left: 0; right: 0; z-index: 100; }
+        .nav-logo { font-size: 18px; font-weight: 600; color: #0052d9; margin-right: 40px; text-decoration: none; display: flex; align-items: center; gap: 8px; }
+        .nav-links { display: flex; gap: 24px; flex: 1; }
+        .nav-links a { color: #666; text-decoration: none; font-size: 14px; padding: 4px 0; transition: color 0.2s; }
+        .nav-links a:hover, .nav-links a.active { color: #0052d9; }
+        .nav-right { display: flex; align-items: center; gap: 12px; }
+        .nav-right a { text-decoration: none; }
+    </style>
+</head>
+<body>
+<div class="top-nav">
+    <a href="/" class="nav-logo">
+        <?php if ($siteLogo): ?>
+            <img src="<?= htmlspecialchars($siteLogo) ?>" alt="<?= htmlspecialchars($siteName) ?>" style="height:28px;max-width:120px;object-fit:contain;">
+        <?php else: ?>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0052d9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        <?php endif; ?>
+        <?= htmlspecialchars($siteName) ?>
+    </a>
+    <div class="nav-links">
+        <a href="/" id="nav-home">首页</a>
+        <a href="/user/dashboard" id="nav-console">控制台</a>
+        <a href="/pricing" id="nav-pricing">模型广场</a>
+    </div>
+    <div class="nav-right" id="nav-auth">
+        <a href="/user/login"><t-button theme="primary" variant="outline" size="small">登录</t-button></a>
+        <a href="/user/register"><t-button theme="primary" size="small">注册</t-button></a>
+    </div>
+</div>
+<script>
+(function() {
+    // 高亮当前导航
+    var path = window.location.pathname;
+    if (path === '/') document.getElementById('nav-home').classList.add('active');
+    else if (path === '/pricing') document.getElementById('nav-pricing').classList.add('active');
+    else if (path.startsWith('/user')) document.getElementById('nav-console').classList.add('active');
+
+    // 检查登录状态，已登录则显示用户名
+    axios.get('/api/user/auth/info').then(function(res) {
+        if (res.data.code === 0) {
+            var user = res.data.data;
+            var name = user.display_name || user.username;
+            document.getElementById('nav-auth').innerHTML =
+                '<span style="font-size:14px;color:#333;">' + name + '</span>' +
+                '<a href="/user/dashboard"><t-button theme="primary" variant="outline" size="small">控制台</t-button></a>';
+        }
+    }).catch(function() {});
+})();
+</script>

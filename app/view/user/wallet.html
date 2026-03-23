@@ -1,0 +1,255 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 钱包概览 -->
+    <div class="stat-cards">
+        <div class="stat-card">
+            <div class="label">当前余额</div>
+            <div class="value" style="color:#0052d9;">¥{{ Number(wallet.balance || 0).toFixed(4) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总充值</div>
+            <div class="value">¥{{ Number(wallet.total_recharge || 0).toFixed(4) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总消费</div>
+            <div class="value">¥{{ Number(wallet.total_consumption || 0).toFixed(4) }}</div>
+        </div>
+    </div>
+
+    <!-- 充值操作 -->
+    <div class="content-card" style="margin-bottom:16px;">
+        <div style="font-size:14px;font-weight:500;margin-bottom:16px;">充值</div>
+
+        <!-- 兑换码 -->
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">
+            <t-input v-model="redeemCode" placeholder="请输入兑换码" style="width:320px;" @enter="handleRedeem" clearable></t-input>
+            <t-button theme="primary" @click="handleRedeem" :loading="redeeming">兑换</t-button>
+            <t-button v-if="rechargeUrl" theme="default" @click="openRechargeUrl">
+                <template #icon><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg></template>
+                购买额度
+            </t-button>
+        </div>
+
+        <!-- 在线充值（内联，仅在支付开启时显示） -->
+        <div v-if="paymentEnabled" style="border-top:1px solid #f0f0f0;padding-top:16px;">
+            <div style="font-size:13px;color:#666;margin-bottom:12px;">在线充值</div>
+            <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+                <div>
+                    <div style="font-size:12px;color:#999;margin-bottom:6px;">充值金额（元）</div>
+                    <t-input-number v-model="payAmount" :min="1" :max="10000" :decimal-places="2" style="width:180px;" placeholder="输入金额" />
+                </div>
+                <div v-if="payChannels.length > 0">
+                    <div style="font-size:12px;color:#999;margin-bottom:6px;">支付方式</div>
+                    <t-radio-group v-model="payChannel">
+                        <t-radio v-for="ch in payChannels" :key="ch.name" :value="ch.name" style="margin-right:12px;">
+                            {{ ch.label }}
+                        </t-radio>
+                    </t-radio-group>
+                </div>
+                <t-button theme="primary" @click="handlePay" :loading="payLoading">
+                    <template #icon><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg></template>
+                    立即充值
+                </t-button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 交易记录 -->
+    <div class="content-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div style="font-size:14px;font-weight:500;">交易记录</div>
+            <t-select v-model="filterType" placeholder="全部类型" style="width:140px;" clearable @change="fetchTransactions">
+                <t-option :value="1" label="充值" />
+                <t-option :value="2" label="消费" />
+                <t-option :value="3" label="退款" />
+                <t-option :value="4" label="兑换" />
+                <t-option :value="5" label="调整" />
+            </t-select>
+        </div>
+        <t-table :data="transactions" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #type="{ row }">
+                <t-tag v-if="row.type === 1" theme="primary" variant="light">充值</t-tag>
+                <t-tag v-else-if="row.type === 2" theme="warning" variant="light">消费</t-tag>
+                <t-tag v-else-if="row.type === 3" theme="success" variant="light">退款</t-tag>
+                <t-tag v-else-if="row.type === 4" theme="primary" variant="light">兑换</t-tag>
+                <t-tag v-else-if="row.type === 5" variant="light">调整</t-tag>
+                <t-tag v-else variant="light">未知</t-tag>
+            </template>
+            <template #amount="{ row }">
+                <span :style="{ color: Number(row.amount) >= 0 ? '#00a870' : '#e34d59', fontWeight: 500 }">
+                    {{ Number(row.amount) >= 0 ? '+' : '' }}{{ row.amount }}
+                </span>
+            </template>
+            <template #created_at="{ row }">
+                {{ formatDate(row.created_at) }}
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper />
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const redeeming = ref(false);
+            const redeemCode = ref('');
+            const rechargeUrl = ref('');
+            const paymentEnabled = ref(false);
+            const payChannels = ref([]);  // [{name, label}] 对象数组，name 传给易支付，label 显示给用户
+            const payChannel = ref('');
+            const payLoading = ref(false);
+            const payAmount = ref(10);
+            const filterType = ref(null);
+            const wallet = reactive({ balance: '0.0000', total_recharge: '0.0000', total_consumption: '0.0000' });
+            const transactions = ref([]);
+            const pagination = reactive({ current: 1, total: 0, pageSize: 20 });
+
+            const columns = [
+                { colKey: 'type', title: '类型', width: 80, cell: 'type' },
+                { colKey: 'amount', title: '金额', width: 120, cell: 'amount' },
+                { colKey: 'balance_after', title: '余额', width: 120 },
+                { colKey: 'description', title: '备注', ellipsis: true },
+                { colKey: 'created_at', title: '时间', width: 170, cell: 'created_at' }
+            ];
+
+            function formatDate(dateStr) {
+                if (!dateStr) return '-';
+                var d = new Date(dateStr);
+                if (isNaN(d.getTime())) return '-';
+                return d.getFullYear() + '-' +
+                    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getDate()).padStart(2, '0') + ' ' +
+                    String(d.getHours()).padStart(2, '0') + ':' +
+                    String(d.getMinutes()).padStart(2, '0') + ':' +
+                    String(d.getSeconds()).padStart(2, '0');
+            }
+
+            function fetchWallet() {
+                axios.get('/api/user/wallet').then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        wallet.balance = data.balance;
+                        wallet.total_recharge = data.total_recharge;
+                        wallet.total_consumption = data.total_consumption;
+                    }
+                });
+            }
+
+            function fetchTransactions() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (filterType.value !== null && filterType.value !== undefined) {
+                    params.type = filterType.value;
+                }
+                axios.get('/api/user/wallet/transactions', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        transactions.value = data.data || [];
+                        pagination.total = data.total || 0;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function handleRedeem() {
+                var code = redeemCode.value.trim();
+                if (!code) {
+                    TDesign.MessagePlugin.warning('请输入兑换码');
+                    return;
+                }
+                redeeming.value = true;
+                axios.post('/api/user/wallet/redeem', { code: code }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('兑换成功，充值金额: ¥' + res.data.data.amount);
+                        redeemCode.value = '';
+                        fetchWallet();
+                        fetchTransactions();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '兑换失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { redeeming.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchTransactions();
+            }
+
+            function fetchPublicSettings() {
+                axios.get('/api/public/settings').then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        if (data.recharge_url) {
+                            rechargeUrl.value = data.recharge_url;
+                        }
+                        paymentEnabled.value = data.payment_enabled === true || data.payment_enabled === 'true' || data.payment_enabled === 1;
+                        var channels = Array.isArray(data.pay_channels) ? data.pay_channels : [];
+                        payChannels.value = channels;
+                        // 默认选中第一个可用通道
+                        if (channels.length > 0) {
+                            payChannel.value = channels[0].name;
+                        }
+                    }
+                });
+            }
+
+            function handlePay() {
+                if (!payAmount.value || payAmount.value <= 0) {
+                    TDesign.MessagePlugin.warning('请输入充值金额');
+                    return;
+                }
+                // 有通道配置时必须选中一个
+                var selectedChannel = payChannel.value;
+                if (payChannels.value.length > 0 && !selectedChannel) {
+                    selectedChannel = payChannels.value[0].name;
+                    payChannel.value = selectedChannel;
+                }
+                payLoading.value = true;
+                axios.post('/api/user/wallet/pay', {
+                    amount: payAmount.value,
+                    type: selectedChannel || ''
+                }).then(function(res) {
+                    if (res.data.code === 0 && res.data.data && res.data.data.pay_url) {
+                        window.open(res.data.data.pay_url, '_blank');
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '创建支付订单失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response && err.response.data && err.response.data.msg || '请求失败');
+                }).finally(function() { payLoading.value = false; });
+            }
+
+            function openRechargeUrl() {
+                if (rechargeUrl.value) {
+                    window.open(rechargeUrl.value, '_blank');
+                }
+            }
+
+            onMounted(function() {
+                fetchPublicSettings();
+                fetchWallet();
+                fetchTransactions();
+            });
+
+            return {
+                loading, redeeming, redeemCode, rechargeUrl, paymentEnabled, payChannels, payChannel,
+                payLoading, payAmount, filterType, wallet,
+                transactions, columns, pagination,
+                fetchTransactions, handleRedeem, onPageChange, formatDate, openRechargeUrl, handlePay
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

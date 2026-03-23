@@ -1,0 +1,323 @@
+<?php
+use app\model\Option;
+$siteName = Option::getOption('site_name', 'AI中转站');
+?>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?= htmlspecialchars($siteName) ?> - 用户注册</title>
+    <link rel="stylesheet" href="/assets/css/tdesign.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .register-container { width: 420px; }
+        .register-card { background: #fff; border-radius: 8px; padding: 40px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+        .register-card .title { text-align: center; font-size: 24px; font-weight: 600; color: #333; margin-bottom: 8px; }
+        .register-card .subtitle { text-align: center; font-size: 14px; color: #999; margin-bottom: 32px; }
+        .form-item { margin-bottom: 20px; }
+        .form-item label { display: block; font-size: 14px; color: #333; margin-bottom: 8px; }
+        .form-item input { width: 100%; height: 40px; border: 1px solid #dcdcdc; border-radius: 4px; padding: 0 12px; font-size: 14px; outline: none; transition: border-color 0.3s; }
+        .form-item input:focus { border-color: #0052d9; }
+        .register-btn { width: 100%; height: 40px; background: #0052d9; color: #fff; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; transition: background 0.3s; }
+        .register-btn:hover { background: #0034b5; }
+        .register-btn:disabled { background: #bbd3f0; cursor: not-allowed; }
+        .error-msg { color: #e34d59; font-size: 13px; margin-top: 8px; min-height: 20px; text-align: center; }
+        .extra-links { text-align: center; margin-top: 16px; font-size: 14px; }
+        .extra-links a { color: #0052d9; text-decoration: none; }
+        .extra-links a:hover { text-decoration: underline; }
+        .captcha-row { display: flex; gap: 10px; align-items: center; }
+        .captcha-row input { flex: 1; }
+        .captcha-row img { height: 40px; border-radius: 4px; cursor: pointer; border: 1px solid #dcdcdc; }
+        .email-code-row { display: flex; gap: 10px; }
+        .email-code-row input { flex: 1; }
+        .email-code-row button { flex-shrink: 0; width: 120px; height: 40px; background: #0052d9; color: #fff; border: none; border-radius: 4px; font-size: 13px; cursor: pointer; transition: background 0.3s; }
+        .email-code-row button:hover { background: #0034b5; }
+        .email-code-row button:disabled { background: #bbd3f0; cursor: not-allowed; }
+        .terms-row { margin-bottom: 16px; font-size: 13px; color: #666; display: flex; align-items: center; gap: 6px; }
+        .terms-row input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+        .terms-row a { color: #0052d9; text-decoration: none; cursor: pointer; }
+        .terms-row a:hover { text-decoration: underline; }
+        .closed-notice { text-align: center; padding: 40px 0; color: #999; font-size: 15px; }
+        .dialog-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .dialog-box { background: #fff; border-radius: 8px; width: 560px; max-height: 70vh; display: flex; flex-direction: column; }
+        .dialog-header { padding: 16px 20px; border-bottom: 1px solid #eee; font-size: 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+        .dialog-header .close-btn { cursor: pointer; font-size: 20px; color: #999; background: none; border: none; line-height: 1; }
+        .dialog-header .close-btn:hover { color: #333; }
+        .dialog-body { padding: 20px; overflow-y: auto; flex: 1; font-size: 14px; line-height: 1.8; color: #333; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <div class="register-container" id="app">
+        <div class="register-card">
+            <div class="title"><?= htmlspecialchars($siteName) ?></div>
+            <div class="subtitle">用户注册</div>
+
+            <!-- 注册关闭提示 -->
+            <div v-if="!settingsLoading && !registerEnabled" class="closed-notice">
+                暂未开放注册
+                <div class="extra-links" style="margin-top:16px;">
+                    已有账号？<a href="/user/login">去登录</a>
+                </div>
+            </div>
+
+            <!-- 注册表单 -->
+            <div v-if="!settingsLoading && registerEnabled">
+                <div class="form-item">
+                    <label>用户名</label>
+                    <input type="text" v-model="form.username" placeholder="3-20个字符" autocomplete="username">
+                </div>
+                <div class="form-item">
+                    <label>邮箱</label>
+                    <input type="email" v-model="form.email" :placeholder="emailVerifyEnabled ? '请输入邮箱（必填）' : '请输入邮箱（选填）'" autocomplete="email">
+                </div>
+                <div class="form-item" v-if="emailVerifyEnabled">
+                    <label>邮箱验证码</label>
+                    <div class="email-code-row">
+                        <input type="text" v-model="form.email_code" placeholder="请输入邮箱验证码" maxlength="6">
+                        <button :disabled="emailCountdown > 0 || sendingEmail" @click="sendEmailCode">{{ emailBtnText }}</button>
+                    </div>
+                </div>
+                <div class="form-item">
+                    <label>密码</label>
+                    <input type="password" v-model="form.password" placeholder="至少6个字符" autocomplete="new-password">
+                </div>
+                <div class="form-item">
+                    <label>确认密码</label>
+                    <input type="password" v-model="form.password2" placeholder="请再次输入密码" autocomplete="new-password">
+                </div>
+                <div class="form-item">
+                    <label>邀请码（选填）</label>
+                    <input type="text" v-model="form.invite_code" placeholder="如有邀请码请填写" autocomplete="off">
+                </div>
+                <div class="form-item">
+                    <label>验证码</label>
+                    <div class="captcha-row">
+                        <input type="text" v-model="form.captcha" placeholder="请输入验证码" maxlength="10" @keydown.enter="handleRegister">
+                        <img :src="captchaUrl" @click="refreshCaptcha" title="点击刷新验证码" alt="验证码">
+                    </div>
+                </div>
+                <div v-if="hasTerms || hasPrivacy" class="terms-row">
+                    <input type="checkbox" v-model="agreeTerms" id="agree-check">
+                    <label for="agree-check" style="cursor:pointer;">
+                        我已阅读并同意
+                        <a v-if="hasTerms" @click.prevent="showTermsDialog">用户协议</a>
+                        <span v-if="hasTerms && hasPrivacy"> 和 </span>
+                        <a v-if="hasPrivacy" @click.prevent="showPrivacyDialog">隐私政策</a>
+                    </label>
+                </div>
+                <div class="error-msg">{{ errorMsg }}</div>
+                <button class="register-btn" :disabled="registerLoading || ((hasTerms || hasPrivacy) && !agreeTerms)" @click="handleRegister">{{ registerLoading ? '注册中...' : '注册' }}</button>
+                <div class="extra-links">
+                    已有账号？<a href="/user/login">去登录</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- 协议弹窗 -->
+        <div class="dialog-overlay" v-if="dialogVisible" @click.self="dialogVisible = false">
+            <div class="dialog-box">
+                <div class="dialog-header">
+                    <span>{{ dialogTitle }}</span>
+                    <button class="close-btn" @click="dialogVisible = false">&times;</button>
+                </div>
+                <div class="dialog-body">{{ dialogContent }}</div>
+            </div>
+        </div>
+    </div>
+
+<script src="/assets/js/vue.global.prod.js"></script>
+<script src="/assets/js/axios.min.js"></script>
+<script>
+var { createApp, ref, computed, onMounted } = Vue;
+
+createApp({
+    setup() {
+        var form = ref({
+            username: '', email: '', email_code: '', password: '', password2: '',
+            invite_code: '', captcha: ''
+        });
+        var errorMsg = ref('');
+        var registerLoading = ref(false);
+        var settingsLoading = ref(true);
+        var captchaUrl = ref('/api/captcha?' + Date.now());
+
+        // 设置项
+        var registerEnabled = ref(true);
+        var emailVerifyEnabled = ref(false);
+        var termsOfService = ref('');
+        var privacyPolicy = ref('');
+        var hasTerms = computed(function() { return termsOfService.value.trim().length > 0; });
+        var hasPrivacy = computed(function() { return privacyPolicy.value.trim().length > 0; });
+        var agreeTerms = ref(false);
+
+        // 邮箱验证码
+        var emailCountdown = ref(0);
+        var sendingEmail = ref(false);
+        var emailTimer = null;
+        var emailBtnText = computed(function() {
+            if (sendingEmail.value) return '发送中...';
+            if (emailCountdown.value > 0) return emailCountdown.value + '秒后重发';
+            return '发送验证码';
+        });
+
+        // 协议弹窗
+        var dialogVisible = ref(false);
+        var dialogTitle = ref('');
+        var dialogContent = ref('');
+
+        function refreshCaptcha() {
+            captchaUrl.value = '/api/captcha?' + Date.now();
+        }
+
+        function loadSettings() {
+            settingsLoading.value = true;
+            axios.get('/api/public/settings').then(function(res) {
+                if (res.data.code === 0) {
+                    var d = res.data.data || {};
+                    registerEnabled.value = d.register_enabled !== '0' && d.register_enabled !== 'false';
+                    emailVerifyEnabled.value = d.register_email_verify === '1' || d.register_email_verify === 'true';
+                    termsOfService.value = d.terms_of_service || '';
+                    privacyPolicy.value = d.privacy_policy || '';
+                }
+            }).finally(function() {
+                settingsLoading.value = false;
+            });
+        }
+
+        function sendEmailCode() {
+            var email = form.value.email.trim();
+            if (!email) {
+                errorMsg.value = '请先输入邮箱';
+                return;
+            }
+            sendingEmail.value = true;
+            errorMsg.value = '';
+            axios.post('/api/user/auth/send-email-code', { email: email }).then(function(res) {
+                sendingEmail.value = false;
+                if (res.data.code === 0) {
+                    emailCountdown.value = 60;
+                    if (emailTimer) clearInterval(emailTimer);
+                    emailTimer = setInterval(function() {
+                        emailCountdown.value--;
+                        if (emailCountdown.value <= 0) {
+                            clearInterval(emailTimer);
+                            emailTimer = null;
+                        }
+                    }, 1000);
+                } else {
+                    errorMsg.value = res.data.msg || '发送失败';
+                }
+            }).catch(function(err) {
+                sendingEmail.value = false;
+                errorMsg.value = err.response?.data?.msg || '网络错误，请重试';
+            });
+        }
+
+        function showTermsDialog() {
+            dialogTitle.value = '用户协议';
+            dialogContent.value = termsOfService.value;
+            dialogVisible.value = true;
+        }
+
+        function showPrivacyDialog() {
+            dialogTitle.value = '隐私政策';
+            dialogContent.value = privacyPolicy.value;
+            dialogVisible.value = true;
+        }
+
+        function handleRegister() {
+            var f = form.value;
+            var username = f.username.trim();
+            var email = f.email.trim();
+            var password = f.password;
+            var password2 = f.password2;
+            var captcha = f.captcha.trim();
+
+            if (!username || !password) {
+                errorMsg.value = '请输入用户名和密码';
+                return;
+            }
+            if (username.length < 3 || username.length > 20) {
+                errorMsg.value = '用户名长度需在3-20个字符之间';
+                return;
+            }
+            if (password.length < 6) {
+                errorMsg.value = '密码长度不能少于6个字符';
+                return;
+            }
+            if (password !== password2) {
+                errorMsg.value = '两次输入的密码不一致';
+                return;
+            }
+            if (emailVerifyEnabled.value && !email) {
+                errorMsg.value = '请输入邮箱';
+                return;
+            }
+            if (emailVerifyEnabled.value && !f.email_code.trim()) {
+                errorMsg.value = '请输入邮箱验证码';
+                return;
+            }
+            if (!captcha) {
+                errorMsg.value = '请输入验证码';
+                return;
+            }
+            if ((hasTerms.value || hasPrivacy.value) && !agreeTerms.value) {
+                errorMsg.value = '请先同意用户协议和隐私政策';
+                return;
+            }
+
+            registerLoading.value = true;
+            errorMsg.value = '';
+
+            var postData = {
+                username: username,
+                password: password,
+                captcha: captcha
+            };
+            if (email) postData.email = email;
+            if (f.invite_code.trim()) postData.invite_code = f.invite_code.trim();
+            if (emailVerifyEnabled.value && f.email_code.trim()) postData.email_code = f.email_code.trim();
+
+            axios.post('/api/user/auth/register', postData).then(function(res) {
+                if (res.data.code === 0) {
+                    alert('注册成功，请登录');
+                    window.location.href = '/user/login';
+                } else {
+                    errorMsg.value = res.data.msg || '注册失败';
+                    registerLoading.value = false;
+                    refreshCaptcha();
+                }
+            }).catch(function(err) {
+                errorMsg.value = err.response?.data?.msg || '网络错误，请重试';
+                registerLoading.value = false;
+                refreshCaptcha();
+            });
+        }
+
+        onMounted(function() {
+            loadSettings();
+            // 从URL参数自动填充邀请码
+            var params = new URLSearchParams(window.location.search);
+            var invite = params.get('invite');
+            if (invite) {
+                form.value.invite_code = invite;
+            }
+        });
+
+        return {
+            form, errorMsg, registerLoading, settingsLoading,
+            captchaUrl, refreshCaptcha,
+            registerEnabled, emailVerifyEnabled,
+            termsOfService, privacyPolicy, hasTerms, hasPrivacy, agreeTerms,
+            emailCountdown, sendingEmail, emailBtnText, sendEmailCode,
+            dialogVisible, dialogTitle, dialogContent,
+            showTermsDialog, showPrivacyDialog,
+            handleRegister
+        };
+    }
+}).mount('#app');
+</script>
+</body>
+</html>

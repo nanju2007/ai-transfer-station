@@ -1,0 +1,983 @@
+<?php
+use app\model\Option;
+$siteName = Option::getOption('site_name', 'AI');
+$siteLogo = Option::getOption('site_logo', '');
+?>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模型广场 - <?= htmlspecialchars($siteName) ?></title>
+    <script src="/assets/js/vue.global.prod.js"></script>
+    <script src="/assets/js/axios.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --cream: #f5f0e8;
+            --dark: #1a1a1a;
+            --orange: #0055ff;
+            --orange-dark: #0044cc;
+            --gray: #6b7280;
+            --white: #ffffff;
+            --border: rgba(26,26,26,0.1);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: var(--cream);
+            color: var(--dark);
+            line-height: 1.6;
+        }
+
+        /* ===== 导航栏 ===== */
+        .nav {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: var(--cream);
+            border-bottom: 1px solid var(--border);
+            height: 64px;
+            display: flex;
+            align-items: center;
+            padding: 0 48px;
+        }
+        .nav-inner {
+            max-width: 1280px;
+            width: 100%;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .nav-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            color: var(--dark);
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+        }
+        .nav-logo img { height: 30px; object-fit: contain; }
+        .nav-logo-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--dark);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 32px;
+        }
+        .nav-links a {
+            text-decoration: none;
+            color: var(--gray);
+            font-size: 14px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover, .nav-links a.active { color: var(--dark); }
+        .nav-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .btn-outline-sm {
+            padding: 7px 18px;
+            border: 1.5px solid var(--dark);
+            border-radius: 2px;
+            background: transparent;
+            color: var(--dark);
+            font-size: 14px;
+            font-weight: 500;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-outline-sm:hover { background: var(--dark); color: var(--white); }
+        .btn-solid-sm {
+            padding: 7px 18px;
+            border: 1.5px solid var(--orange);
+            border-radius: 2px;
+            background: var(--orange);
+            color: var(--white);
+            font-size: 14px;
+            font-weight: 500;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-solid-sm:hover { background: var(--orange-dark); border-color: var(--orange-dark); }
+
+        /* ===== Hero 区域（小） ===== */
+        .hero-mini {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d1500 50%, #1a0d00 100%);
+            padding: 64px 48px 56px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero-mini::before {
+            content: '';
+            position: absolute;
+            top: -100px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(224,122,62,0.12) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .hero-mini-deco-1 {
+            position: absolute;
+            top: -30px;
+            left: 5%;
+            width: 140px;
+            height: 140px;
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 50%;
+        }
+        .hero-mini-deco-2 {
+            position: absolute;
+            bottom: -20px;
+            right: 8%;
+            width: 100px;
+            height: 100px;
+            border: 1px solid rgba(224,122,62,0.1);
+            border-radius: 50%;
+        }
+        .hero-mini-content { position: relative; z-index: 1; }
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(224,122,62,0.15);
+            border: 1px solid rgba(224,122,62,0.3);
+            border-radius: 20px;
+            padding: 5px 14px;
+            font-size: 12px;
+            color: #e07a3e;
+            margin-bottom: 20px;
+        }
+        .hero-badge span { display: inline-block; width: 5px; height: 5px; background: #e07a3e; border-radius: 50%; }
+        .hero-mini h1 {
+            font-size: 44px;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: -1px;
+            margin-bottom: 12px;
+        }
+        .hero-mini p {
+            font-size: 16px;
+            color: rgba(255,255,255,0.55);
+            font-weight: 300;
+        }
+
+        /* ===== 筛选区 ===== */
+        .filter-bar {
+            background: var(--white);
+            border-bottom: 1px solid var(--border);
+            padding: 20px 48px;
+            position: sticky;
+            top: 64px;
+            z-index: 90;
+        }
+        .filter-inner {
+            max-width: 1280px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .search-wrap {
+            position: relative;
+            flex-shrink: 0;
+        }
+        .search-wrap svg {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+        }
+        .search-input {
+            padding: 9px 12px 9px 38px;
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            width: 240px;
+            color: var(--dark);
+            background: var(--cream);
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .search-input:focus { border-color: var(--orange); background: var(--white); }
+        .search-input::placeholder { color: #9ca3af; }
+        .filter-divider {
+            width: 1px;
+            height: 28px;
+            background: var(--border);
+            flex-shrink: 0;
+        }
+        .filter-tags {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            flex: 1;
+        }
+        .filter-tag {
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--gray);
+            background: var(--cream);
+            border: 1.5px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .filter-tag:hover { color: var(--dark); border-color: var(--border); }
+        .filter-tag.active { color: var(--orange); background: rgba(224,122,62,0.08); border-color: rgba(224,122,62,0.3); }
+        .filter-reset {
+            font-size: 13px;
+            color: var(--gray);
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            white-space: nowrap;
+            flex-shrink: 0;
+            border: none;
+            background: none;
+        }
+        .filter-reset:hover { color: var(--orange); background: rgba(224,122,62,0.06); }
+        .filter-count {
+            font-size: 13px;
+            color: var(--gray);
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .filter-count strong { color: var(--dark); font-weight: 600; }
+
+        /* ===== 模型列表 ===== */
+        .models-section {
+            padding: 40px 48px 80px;
+            max-width: 1280px;
+            margin: 0 auto;
+        }
+        .models-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+        }
+        .model-card {
+            background: var(--white);
+            border: 1.5px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+        }
+        .model-card:hover {
+            border-color: var(--orange);
+            box-shadow: 0 8px 24px rgba(224,122,62,0.1);
+            transform: translateY(-2px);
+        }
+        .model-card-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .model-provider-badge {
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 4px;
+            letter-spacing: 0.5px;
+        }
+        .model-context-badge {
+            font-size: 11px;
+            color: var(--gray);
+            background: var(--cream);
+            padding: 3px 10px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+        .model-card-name {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--dark);
+            margin-bottom: 8px;
+            word-break: break-all;
+            line-height: 1.3;
+        }
+        .model-card-desc {
+            font-size: 13px;
+            color: var(--gray);
+            line-height: 1.7;
+            margin-bottom: 16px;
+            flex: 1;
+        }
+        .model-card-pricing {
+            border-top: 1px solid var(--border);
+            padding-top: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 14px;
+        }
+        .pricing-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+        }
+        .pricing-label { color: var(--gray); }
+        .pricing-value { font-weight: 600; color: var(--dark); font-variant-numeric: tabular-nums; }
+        .model-card-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .billing-badge {
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 4px;
+            background: rgba(224,122,62,0.08);
+            color: var(--orange);
+            border: 1px solid rgba(224,122,62,0.2);
+            font-weight: 500;
+        }
+        .copy-btn {
+            font-size: 12px;
+            color: var(--gray);
+            cursor: pointer;
+            background: var(--cream);
+            border: 1px solid var(--border);
+            padding: 4px 12px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .copy-btn:hover { color: var(--orange); border-color: rgba(224,122,62,0.4); background: rgba(224,122,62,0.05); }
+
+        /* ===== Loading / 空状态 ===== */
+        .loading-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 100px 20px;
+            gap: 16px;
+        }
+        .loading-spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid var(--border);
+            border-top-color: var(--orange);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { font-size: 14px; color: var(--gray); }
+        .empty-state {
+            text-align: center;
+            padding: 100px 20px;
+        }
+        .empty-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(107,114,128,0.08);
+            border-radius: 50%;
+        }
+        .empty-icon svg {
+            width: 32px;
+            height: 32px;
+            stroke: var(--gray);
+        }
+        .empty-title { font-size: 18px; font-weight: 600; color: var(--dark); margin-bottom: 8px; }
+        .empty-desc { font-size: 14px; color: var(--gray); }
+
+        /* ===== 模型详情浮层 ===== */
+        .detail-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            z-index: 200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            backdrop-filter: blur(4px);
+        }
+        .detail-panel {
+            background: var(--white);
+            border-radius: 16px;
+            width: 100%;
+            max-width: 560px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.2);
+        }
+        .detail-header {
+            padding: 24px 28px 0;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            position: sticky;
+            top: 0;
+            background: var(--white);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 20px;
+        }
+        .detail-title { font-size: 20px; font-weight: 700; color: var(--dark); word-break: break-all; }
+        .detail-close {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            border: 1.5px solid var(--border);
+            background: transparent;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: all 0.2s;
+        }
+        .detail-close:hover { background: var(--cream); border-color: var(--dark); }
+        .detail-body { padding: 24px 28px 28px; }
+        .detail-section { margin-bottom: 24px; }
+        .detail-section-label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--gray);
+            margin-bottom: 12px;
+        }
+        .detail-row {
+            display: flex;
+            gap: 16px;
+            font-size: 14px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            line-height: 1.5;
+        }
+        .detail-row:last-child { border-bottom: none; }
+        .detail-row-label { color: var(--gray); width: 80px; flex-shrink: 0; }
+        .detail-row-value { color: var(--dark); flex: 1; word-break: break-all; font-weight: 500; }
+        .detail-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+        .btn-detail-primary {
+            flex: 1;
+            padding: 12px;
+            background: var(--orange);
+            color: var(--white);
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+            text-decoration: none;
+            transition: background 0.2s;
+            display: block;
+        }
+        .btn-detail-primary:hover { background: var(--orange-dark); }
+        .btn-detail-copy {
+            padding: 12px 20px;
+            background: var(--cream);
+            color: var(--dark);
+            border: 1.5px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-detail-copy:hover { border-color: var(--orange); color: var(--orange); }
+
+        /* ===== Toast ===== */
+        .toast {
+            position: fixed;
+            bottom: 32px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--dark);
+            color: var(--white);
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 300;
+            transition: transform 0.3s ease;
+            white-space: nowrap;
+        }
+        .toast.show { transform: translateX(-50%) translateY(0); }
+
+        /* ===== 页脚 ===== */
+        .footer {
+            background: #111111;
+            padding: 40px 48px;
+        }
+        .footer-inner {
+            max-width: 1280px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .footer-logo { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.7); text-decoration: none; }
+        .footer-links { display: flex; gap: 24px; }
+        .footer-links a { font-size: 13px; color: rgba(255,255,255,0.4); text-decoration: none; transition: color 0.2s; }
+        .footer-links a:hover { color: rgba(255,255,255,0.8); }
+        .footer-copy { font-size: 13px; color: rgba(255,255,255,0.3); }
+
+        /* ===== 响应式 ===== */
+        @media (max-width: 1100px) {
+            .models-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 768px) {
+            .nav { padding: 0 20px; }
+            .nav-links { display: none; }
+            .hero-mini { padding: 48px 24px 40px; }
+            .hero-mini h1 { font-size: 32px; }
+            .filter-bar { padding: 16px 20px; top: 64px; }
+            .search-input { width: 180px; }
+            .models-section { padding: 24px 20px 60px; }
+            .models-grid { grid-template-columns: 1fr; }
+            .footer { padding: 32px 20px; }
+            .footer-inner { flex-direction: column; align-items: flex-start; }
+            .detail-panel { max-height: 90vh; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- 导航栏 -->
+<header class="nav">
+    <div class="nav-inner">
+        <a href="/" class="nav-logo">
+            <?php if ($siteLogo): ?>
+                <img src="<?= htmlspecialchars($siteLogo) ?>" alt="<?= htmlspecialchars($siteName) ?>">
+            <?php else: ?>
+                <div class="nav-logo-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e07a3e" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                        <path d="M2 17l10 5 10-5"/>
+                        <path d="M2 12l10 5 10-5"/>
+                    </svg>
+                </div>
+            <?php endif; ?>
+            <?= htmlspecialchars($siteName) ?>
+        </a>
+        <nav class="nav-links">
+            <a href="/pricing" class="active">模型广场</a>
+            <a href="/user/dashboard">控制台</a>
+        </nav>
+        <div class="nav-right" id="nav-auth">
+            <a href="/user/login" class="btn-outline-sm">登录</a>
+            <a href="/user/register" class="btn-solid-sm">免费注册</a>
+        </div>
+    </div>
+</header>
+
+<!-- Hero 小区域 -->
+<section class="hero-mini">
+    <div class="hero-mini-deco-1"></div>
+    <div class="hero-mini-deco-2"></div>
+    <div class="hero-mini-content">
+        <div class="hero-badge">
+            <span></span>
+            持续更新
+        </div>
+        <h1>AI 模型广场</h1>
+        <p>透明定价，按量计费，选择最适合您的 AI 模型</p>
+    </div>
+</section>
+
+<!-- Vue 应用 -->
+<div id="app">
+
+    <!-- 筛选栏 -->
+    <div class="filter-bar">
+        <div class="filter-inner">
+            <div class="search-wrap">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+                </svg>
+                <input
+                    class="search-input"
+                    type="text"
+                    v-model="keyword"
+                    placeholder="搜索模型名称..."
+                    @input="onSearch"
+                >
+            </div>
+            <div class="filter-divider"></div>
+            <div class="filter-tags">
+                <span
+                    class="filter-tag"
+                    :class="{ active: !filters.provider }"
+                    @click="setProvider('')"
+                >全部</span>
+                <span
+                    class="filter-tag"
+                    v-for="p in providers"
+                    :key="p"
+                    :class="{ active: filters.provider === p }"
+                    @click="setProvider(p)"
+                >{{ p }}</span>
+            </div>
+            <button class="filter-reset" @click="resetFilters" v-if="hasFilter">重置筛选</button>
+            <div class="filter-count">共 <strong>{{ filteredModels.length }}</strong> 个模型</div>
+        </div>
+    </div>
+
+    <!-- 模型网格 -->
+    <div class="models-section">
+        <!-- Loading -->
+        <div v-if="loading" class="loading-state">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">正在加载模型数据...</div>
+        </div>
+
+        <!-- 空状态 -->
+        <div v-else-if="filteredModels.length === 0" class="empty-state">
+            <div class="empty-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+                </svg>
+            </div>
+            <div class="empty-title">未找到匹配的模型</div>
+            <div class="empty-desc">尝试调整搜索关键词或筛选条件</div>
+        </div>
+
+        <!-- 模型卡片 -->
+        <div v-else class="models-grid">
+            <div
+                class="model-card"
+                v-for="model in filteredModels"
+                :key="model.id"
+                @click="showDetail(model)"
+            >
+                <div class="model-card-top">
+                    <span
+                        class="model-provider-badge"
+                        :style="getProviderStyle(model.provider)"
+                    >{{ model.provider || '未知' }}</span>
+                    <span v-if="model.context_length" class="model-context-badge">
+                        {{ formatContext(model.context_length) }}
+                    </span>
+                </div>
+                <div class="model-card-name">{{ model.display_name || model.model_name }}</div>
+                <div class="model-card-desc">{{ model.description || model.model_name }}</div>
+
+                <div class="model-card-pricing" v-if="getModelPricing(model)">
+                    <div class="pricing-row">
+                        <span class="pricing-label">输入价格</span>
+                        <span class="pricing-value">{{ formatPrice(getModelPricing(model).input_price) }} / 1M</span>
+                    </div>
+                    <div class="pricing-row">
+                        <span class="pricing-label">输出价格</span>
+                        <span class="pricing-value">{{ formatPrice(getModelPricing(model).output_price) }} / 1M</span>
+                    </div>
+                </div>
+                <div class="model-card-pricing" v-else>
+                    <div class="pricing-row">
+                        <span class="pricing-label">定价信息</span>
+                        <span style="font-size:12px;color:#9ca3af;">暂无定价</span>
+                    </div>
+                </div>
+
+                <div class="model-card-footer">
+                    <span class="billing-badge">{{ getBillingType(model) }}</span>
+                    <button class="copy-btn" @click.stop="copyModelName(model.model_name)">复制名称</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 详情浮层 -->
+    <div class="detail-overlay" v-if="detailVisible" @click.self="detailVisible = false">
+        <div class="detail-panel" v-if="detailModel">
+            <div class="detail-header">
+                <div>
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <span class="model-provider-badge" :style="getProviderStyle(detailModel.provider)">
+                            {{ detailModel.provider || '未知' }}
+                        </span>
+                    </div>
+                    <div class="detail-title">{{ detailModel.display_name || detailModel.model_name }}</div>
+                </div>
+                <button class="detail-close" @click="detailVisible = false">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="detail-body">
+                <!-- 基本信息 -->
+                <div class="detail-section">
+                    <div class="detail-section-label">基本信息</div>
+                    <div class="detail-row">
+                        <span class="detail-row-label">模型标识</span>
+                        <span class="detail-row-value" style="font-family:monospace;font-size:12px;">{{ detailModel.model_name }}</span>
+                    </div>
+                    <div class="detail-row" v-if="detailModel.type">
+                        <span class="detail-row-label">模型类型</span>
+                        <span class="detail-row-value">{{ detailModel.type }}</span>
+                    </div>
+                    <div class="detail-row" v-if="detailModel.context_length">
+                        <span class="detail-row-label">上下文长度</span>
+                        <span class="detail-row-value">{{ formatContext(detailModel.context_length) }}</span>
+                    </div>
+                    <div class="detail-row" v-if="detailModel.description">
+                        <span class="detail-row-label">描述</span>
+                        <span class="detail-row-value">{{ detailModel.description }}</span>
+                    </div>
+                </div>
+
+                <!-- 定价信息 -->
+                <div class="detail-section" v-if="detailModel.pricing && detailModel.pricing.length">
+                    <div class="detail-section-label">定价信息</div>
+                    <div v-for="p in detailModel.pricing" :key="p.id">
+                        <div class="detail-row">
+                            <span class="detail-row-label">计费方式</span>
+                            <span class="detail-row-value">{{ p.billing_type === 'tokens' ? '按量计费 (Token)' : '按次计费' }}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-row-label">输入价格</span>
+                            <span class="detail-row-value">{{ formatPrice(p.input_price) }} / 1M Tokens</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-row-label">输出价格</span>
+                            <span class="detail-row-value">{{ formatPrice(p.output_price) }} / 1M Tokens</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- API 端点 -->
+                <div class="detail-section" v-if="detailModel.endpoints && detailModel.endpoints.length">
+                    <div class="detail-section-label">API 端点</div>
+                    <div class="detail-row" v-for="ep in detailModel.endpoints" :key="ep.type">
+                        <span class="detail-row-label">{{ ep.type }}</span>
+                        <span class="detail-row-value" style="font-family:monospace;font-size:12px;">
+                            {{ (ep.method || 'POST').toUpperCase() }} {{ ep.path || '-' }}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="detail-actions">
+                    <a href="/user/playground" class="btn-detail-primary">前往操练场使用</a>
+                    <button class="btn-detail-copy" @click="copyModelName(detailModel.model_name)">复制模型名</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Toast 提示 -->
+<div class="toast" id="toast"></div>
+
+<!-- 页脚 -->
+<footer class="footer">
+    <?php
+    $_footerContent = Option::getOption('site_footer', '');
+    ?>
+    <div class="footer-inner">
+        <a href="/" class="footer-logo"><?= htmlspecialchars($siteName) ?></a>
+        <div class="footer-links">
+            <a href="/">首页</a>
+            <a href="/pricing">模型广场</a>
+            <a href="/user/dashboard">控制台</a>
+        </div>
+        <div class="footer-copy">
+            <?php if ($_footerContent): ?>
+                <?= $_footerContent ?>
+            <?php else: ?>
+                © <?= date('Y') ?> <?= htmlspecialchars($siteName) ?>. All rights reserved.
+            <?php endif; ?>
+        </div>
+    </div>
+</footer>
+
+<script>
+var app = Vue.createApp({
+    data: function() {
+        return {
+            loading: true,
+            models: [],
+            providers: [],
+            keyword: '',
+            searchTimer: null,
+            filters: {
+                provider: ''
+            },
+            detailVisible: false,
+            detailModel: null
+        };
+    },
+    computed: {
+        hasFilter: function() {
+            return !!(this.filters.provider || this.keyword);
+        },
+        filteredModels: function() {
+            return this.models;
+        }
+    },
+    mounted: function() {
+        this.fetchModels();
+        this.fetchProviders();
+        this.checkAuth();
+    },
+    methods: {
+        checkAuth: function() {
+            axios.get('/api/user/auth/info').then(function(res) {
+                if (res.data.code === 0) {
+                    var user = res.data.data;
+                    var name = user.display_name || user.username;
+                    var el = document.getElementById('nav-auth');
+                    if (el) {
+                        el.innerHTML =
+                            '<span style="font-size:14px;color:#6b7280;font-weight:500;">' + name + '</span>' +
+                            '<a href="/user/dashboard" class="btn-solid-sm">进入控制台</a>';
+                    }
+                }
+            }).catch(function() {});
+        },
+        fetchModels: function() {
+            var self = this;
+            self.loading = true;
+            var params = {};
+            if (self.filters.provider) params.provider = self.filters.provider;
+            if (self.keyword) params.keyword = self.keyword;
+            axios.get('/api/public/models', { params: params }).then(function(res) {
+                if (res.data.code === 0) {
+                    self.models = res.data.data.list || [];
+                }
+                self.loading = false;
+            }).catch(function() {
+                self.loading = false;
+            });
+        },
+        fetchProviders: function() {
+            var self = this;
+            axios.get('/api/public/models/providers').then(function(res) {
+                if (res.data.code === 0) {
+                    self.providers = res.data.data || [];
+                }
+            });
+        },
+        onSearch: function() {
+            var self = this;
+            clearTimeout(self.searchTimer);
+            self.searchTimer = setTimeout(function() {
+                self.fetchModels();
+            }, 400);
+        },
+        setProvider: function(p) {
+            this.filters.provider = p;
+            this.fetchModels();
+        },
+        resetFilters: function() {
+            this.filters = { provider: '' };
+            this.keyword = '';
+            this.fetchModels();
+        },
+        getModelPricing: function(model) {
+            if (model.pricing && model.pricing.length > 0) return model.pricing[0];
+            return null;
+        },
+        getBillingType: function(model) {
+            var p = this.getModelPricing(model);
+            if (!p) return '未定价';
+            return p.billing_type === 'tokens' ? '按量计费' : '按次计费';
+        },
+        formatPrice: function(price) {
+            if (price === null || price === undefined) return '-';
+            return '¥' + parseFloat(price).toFixed(4);
+        },
+        formatContext: function(ctx) {
+            if (!ctx) return '';
+            if (ctx >= 1000000) return (ctx / 1000000).toFixed(0) + 'M';
+            if (ctx >= 1000) return (ctx / 1000).toFixed(0) + 'K';
+            return ctx + '';
+        },
+        getProviderStyle: function(provider) {
+            var map = {
+                'openai': { bg: 'rgba(16,163,127,0.12)', color: '#0d9373' },
+                'OpenAI': { bg: 'rgba(16,163,127,0.12)', color: '#0d9373' },
+                'anthropic': { bg: 'rgba(224,122,62,0.12)', color: '#c4612a' },
+                'Anthropic': { bg: 'rgba(224,122,62,0.12)', color: '#c4612a' },
+                'google': { bg: 'rgba(66,133,244,0.12)', color: '#3367d6' },
+                'Google': { bg: 'rgba(66,133,244,0.12)', color: '#3367d6' },
+                'meta': { bg: 'rgba(24,119,242,0.12)', color: '#1877f2' },
+                'Meta': { bg: 'rgba(24,119,242,0.12)', color: '#1877f2' },
+                'deepseek': { bg: 'rgba(0,82,217,0.12)', color: '#0052d9' },
+                'DeepSeek': { bg: 'rgba(0,82,217,0.12)', color: '#0052d9' },
+                'baidu': { bg: 'rgba(41,50,225,0.12)', color: '#2932e1' },
+                'Baidu': { bg: 'rgba(41,50,225,0.12)', color: '#2932e1' },
+            };
+            var s = map[provider] || { bg: 'rgba(107,114,128,0.12)', color: '#6b7280' };
+            return 'background:' + s.bg + ';color:' + s.color + ';';
+        },
+        copyModelName: function(name) {
+            var self = this;
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(name);
+            } else {
+                var ta = document.createElement('textarea');
+                ta.value = name;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            self.showToast('已复制: ' + name);
+        },
+        showToast: function(msg) {
+            var el = document.getElementById('toast');
+            el.textContent = msg;
+            el.classList.add('show');
+            setTimeout(function() { el.classList.remove('show'); }, 2500);
+        },
+        showDetail: function(model) {
+            var self = this;
+            // 先显示已知数据
+            self.detailModel = model;
+            self.detailVisible = true;
+            // 再请求完整数据
+            axios.get('/api/public/models/' + model.id).then(function(res) {
+                if (res.data.code === 0) {
+                    self.detailModel = res.data.data;
+                }
+            });
+        }
+    }
+});
+app.mount('#app');
+</script>
+</body>
+</html>

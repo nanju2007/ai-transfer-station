@@ -1,0 +1,298 @@
+<?php $currentPage = 'users'; $pageTitle = '用户管理'; ?>
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <t-input v-model="searchKeyword" placeholder="搜索用户名/邮箱" style="width: 240px;" @enter="fetchList" clearable></t-input>
+        <t-select v-model="searchGroup" placeholder="分组" style="width: 140px;" clearable @change="fetchList">
+            <t-option v-for="g in groups" :key="g.name" :value="g.name" :label="g.display_name"></t-option>
+        </t-select>
+        <t-button theme="primary" @click="fetchList">搜索</t-button>
+        <div class="spacer"></div>
+        <t-button theme="primary" @click="openCreate">新建用户</t-button>
+    </div>
+
+    <!-- 表格 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #group_name="{ row }">
+                <t-tag variant="light">{{ row.group_name || row.group || 'default' }}</t-tag>
+            </template>
+            <template #role="{ row }">
+                <t-tag v-if="row.role >= 100" theme="danger" variant="light">管理员</t-tag>
+                <t-tag v-else theme="primary" variant="light">普通用户</t-tag>
+            </template>
+            <template #status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">正常</t-tag>
+                <t-tag v-else theme="danger" variant="light">禁用</t-tag>
+            </template>
+            <template #created_at="{ row }">
+                {{ formatTime(row.created_at) }}
+            </template>
+            <template #balance="{ row }">
+                ¥{{ Number(row.balance || 0).toFixed(4) }}
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openEdit(row)">编辑</t-link>
+                    <t-link theme="primary" @click="openAdjustQuota(row)">调额</t-link>
+                    <t-link :theme="row.status === 1 ? 'danger' : 'success'" @click="handleToggleStatus(row)">
+                        {{ row.status === 1 ? '禁用' : '启用' }}
+                    </t-link>
+                    <t-popconfirm content="确定删除该用户？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper />
+        </div>
+    </div>
+
+    <!-- 新建/编辑用户对话框 -->
+    <t-dialog v-model:visible="dialogVisible" :header="dialogTitle" width="520px" :confirm-on-enter="false"
+        @confirm="handleSubmit" :confirm-btn="{ loading: submitting }">
+        <t-form :data="formData" label-width="80px">
+            <t-form-item label="用户名" name="username">
+                <t-input v-model="formData.username" placeholder="请输入用户名" />
+            </t-form-item>
+            <t-form-item label="显示名" name="display_name">
+                <t-input v-model="formData.display_name" placeholder="显示名称" />
+            </t-form-item>
+            <t-form-item label="邮箱" name="email">
+                <t-input v-model="formData.email" placeholder="请输入邮箱" />
+            </t-form-item>
+            <t-form-item label="密码" name="password">
+                <t-input v-model="formData.password" type="password" :placeholder="editingId ? '留空则不修改' : '请输入密码'" />
+            </t-form-item>
+            <t-form-item label="分组" name="group">
+                <t-select v-model="formData.group">
+                    <t-option v-for="g in groups" :key="g.name" :value="g.name" :label="g.display_name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="角色" name="role">
+                <t-select v-model="formData.role">
+                    <t-option :value="1" label="普通用户"></t-option>
+                    <t-option :value="100" label="管理员"></t-option>
+                </t-select>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+
+    <!-- 调整余额对话框 -->
+    <t-dialog v-model:visible="quotaVisible" header="调整余额" width="460px" :confirm-on-enter="false"
+        @confirm="handleAdjustQuota" :confirm-btn="{ loading: submitting }">
+        <t-form :data="quotaForm" label-width="80px">
+            <t-form-item label="当前用户">
+                <span>{{ quotaForm.username }}（当前余额：¥{{ Number(quotaForm.currentBalance || 0).toFixed(4) }}）</span>
+            </t-form-item>
+            <t-form-item label="操作类型">
+                <t-radio-group v-model="quotaForm.type">
+                    <t-radio value="increase">充值</t-radio>
+                    <t-radio value="decrease">扣款</t-radio>
+                </t-radio-group>
+            </t-form-item>
+            <t-form-item label="金额(元)">
+                <t-input-number v-model="quotaForm.amount" :min="0.0001" :decimal-places="4" style="width:100%;" placeholder="单位：元" />
+            </t-form-item>
+            <t-form-item label="备注">
+                <t-textarea v-model="quotaForm.remark" placeholder="调整原因" :autosize="{ minRows: 2, maxRows: 4 }" />
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const submitting = ref(false);
+            const tableData = ref([]);
+            const searchKeyword = ref('');
+            const searchGroup = ref(null);
+            const groups = ref([]);
+            const dialogVisible = ref(false);
+            const dialogTitle = ref('新建用户');
+            const editingId = ref(null);
+            const quotaVisible = ref(false);
+
+            const pagination = reactive({ current: 1, total: 0, pageSize: 15 });
+
+            const defaultForm = { username: '', display_name: '', email: '', password: '', role: 1, group: 'default' };
+            const formData = reactive({ ...defaultForm });
+
+            const quotaForm = reactive({
+                userId: null,
+                username: '',
+                currentBalance: 0,
+                type: 'increase',
+                amount: 1,
+                remark: ''
+            });
+
+            const columns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'username', title: '用户名', width: 130 },
+                { colKey: 'display_name', title: '显示名', width: 130 },
+                { colKey: 'email', title: '邮箱', width: 180 },
+                { colKey: 'group_name', title: '分组', width: 100, cell: 'group_name' },
+                { colKey: 'role', title: '角色', width: 90, cell: 'role' },
+                { colKey: 'balance', title: '余额(元)', width: 120, cell: 'balance' },
+                { colKey: 'status', title: '状态', width: 80, cell: 'status' },
+                { colKey: 'created_at', title: '注册时间', width: 170, cell: 'created_at' },
+                { colKey: 'operation', title: '操作', width: 220, cell: 'operation', fixed: 'right' }
+            ];
+
+            function formatTime(val) {
+                if (!val) return '-';
+                var d = new Date(val);
+                if (isNaN(d.getTime())) return val;
+                var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+                return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+            }
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (searchKeyword.value) params.keyword = searchKeyword.value;
+                if (searchGroup.value) params.group = searchGroup.value;
+
+                axios.get('/api/admin/users', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                        pagination.total = res.data.data.total;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            function fetchGroups() {
+                axios.get('/api/admin/groups').then(function(res) {
+                    if (res.data.code === 0) {
+                        groups.value = res.data.data.list;
+                    }
+                });
+            }
+
+            function openCreate() {
+                Object.assign(formData, defaultForm);
+                editingId.value = null;
+                dialogTitle.value = '新建用户';
+                dialogVisible.value = true;
+            }
+
+            function openEdit(row) {
+                editingId.value = row.id;
+                dialogTitle.value = '编辑用户';
+                formData.username = row.username;
+                formData.display_name = row.display_name || '';
+                formData.email = row.email || '';
+                formData.password = '';
+                formData.role = row.role;
+                formData.group = row.group || 'default';
+                dialogVisible.value = true;
+            }
+
+            function handleSubmit() {
+                submitting.value = true;
+                var data = { ...formData };
+                if (editingId.value && !data.password) delete data.password;
+
+                var promise;
+                if (editingId.value) {
+                    promise = axios.put('/api/admin/users/' + editingId.value, data);
+                } else {
+                    promise = axios.post('/api/admin/users', data);
+                }
+                promise.then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(editingId.value ? '更新成功' : '创建成功');
+                        dialogVisible.value = false;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            function handleDelete(row) {
+                axios.delete('/api/admin/users/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            function handleToggleStatus(row) {
+                var newStatus = row.status === 1 ? 2 : 1;
+                axios.put('/api/admin/users/' + row.id + '/status', { status: newStatus }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('状态已更新');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                });
+            }
+
+            function openAdjustQuota(row) {
+                quotaForm.userId = row.id;
+                quotaForm.username = row.username;
+                quotaForm.currentBalance = row.balance || 0;
+                quotaForm.type = 'increase';
+                quotaForm.amount = 1;
+                quotaForm.remark = '';
+                quotaVisible.value = true;
+            }
+
+            function handleAdjustQuota() {
+                submitting.value = true;
+                var amount = quotaForm.type === 'increase' ? quotaForm.amount : -quotaForm.amount;
+                axios.put('/api/admin/users/' + quotaForm.userId + '/quota', { amount: amount }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('额度调整成功');
+                        quotaVisible.value = false;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            onMounted(function() {
+                fetchGroups();
+                fetchList();
+            });
+
+            return {
+                loading, submitting, tableData, columns, searchKeyword, searchGroup, groups,
+                pagination, dialogVisible, dialogTitle, formData, editingId,
+                quotaVisible, quotaForm,
+                fetchList, fetchGroups, onPageChange, openCreate, openEdit, handleSubmit,
+                handleDelete, handleToggleStatus, openAdjustQuota, handleAdjustQuota,
+                formatTime
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

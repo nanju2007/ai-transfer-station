@@ -1,0 +1,194 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 个人信息 -->
+    <div class="content-card" style="margin-bottom:16px;">
+        <div style="font-size:14px;font-weight:500;margin-bottom:16px;">个人信息</div>
+        <t-form :data="profileForm" label-width="100px" style="max-width:500px;">
+            <t-form-item label="用户名">
+                <t-input v-model="profileForm.username" disabled />
+            </t-form-item>
+            <t-form-item label="显示名称">
+                <t-input v-model="profileForm.display_name" placeholder="请输入显示名称" />
+            </t-form-item>
+            <t-form-item label="邮箱">
+                <t-input v-model="profileForm.email" placeholder="请输入邮箱" />
+            </t-form-item>
+            <t-form-item>
+                <t-button theme="primary" @click="handleUpdateProfile" :loading="profileSaving">保存修改</t-button>
+            </t-form-item>
+        </t-form>
+    </div>
+
+    <!-- 修改密码 -->
+    <div class="content-card" style="margin-bottom:16px;">
+        <div style="font-size:14px;font-weight:500;margin-bottom:16px;">修改密码</div>
+        <t-form :data="passwordForm" label-width="100px" style="max-width:500px;">
+            <t-form-item label="旧密码">
+                <t-input v-model="passwordForm.old_password" type="password" placeholder="请输入旧密码" />
+            </t-form-item>
+            <t-form-item label="新密码">
+                <t-input v-model="passwordForm.new_password" type="password" placeholder="至少6个字符" />
+            </t-form-item>
+            <t-form-item label="确认新密码">
+                <t-input v-model="passwordForm.confirm_password" type="password" placeholder="请再次输入新密码" />
+            </t-form-item>
+            <t-form-item>
+                <t-button theme="primary" @click="handleChangePassword" :loading="passwordSaving">修改密码</t-button>
+            </t-form-item>
+        </t-form>
+    </div>
+
+    <!-- 账号信息 -->
+    <div class="content-card">
+        <div style="font-size:14px;font-weight:500;margin-bottom:16px;">账号信息</div>
+        <div style="max-width:500px;">
+            <div style="display:flex;padding:10px 0;border-bottom:1px solid #f0f0f0;">
+                <span style="width:100px;color:#666;font-size:14px;">注册时间</span>
+                <span style="font-size:14px;">{{ accountInfo.created_at || '-' }}</span>
+            </div>
+            <div style="display:flex;padding:10px 0;border-bottom:1px solid #f0f0f0;">
+                <span style="width:100px;color:#666;font-size:14px;">最后登录</span>
+                <span style="font-size:14px;">{{ accountInfo.last_login_at || '-' }}</span>
+            </div>
+            <div style="display:flex;padding:10px 0;border-bottom:1px solid #f0f0f0;">
+                <span style="width:100px;color:#666;font-size:14px;">登录IP</span>
+                <span style="font-size:14px;">{{ accountInfo.last_login_ip || '-' }}</span>
+            </div>
+            <div style="display:flex;padding:10px 0;border-bottom:1px solid #f0f0f0;">
+                <span style="width:100px;color:#666;font-size:14px;">邀请码</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:14px;font-family:monospace;">{{ accountInfo.aff_code || '-' }}</span>
+                    <t-button size="small" variant="text" theme="primary" @click="copyText(accountInfo.aff_code)" v-if="accountInfo.aff_code">复制</t-button>
+                </div>
+            </div>
+            <div style="display:flex;padding:10px 0;">
+                <span style="width:100px;color:#666;font-size:14px;">邀请链接</span>
+                <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
+                    <span style="font-size:13px;font-family:monospace;word-break:break-all;">{{ inviteLink }}</span>
+                    <t-button size="small" variant="text" theme="primary" @click="copyText(inviteLink)" v-if="accountInfo.aff_code">复制</t-button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted, computed } = Vue;
+    const app = createApp({
+        setup() {
+            const profileSaving = ref(false);
+            const passwordSaving = ref(false);
+            const profileForm = reactive({ username: '', display_name: '', email: '' });
+            const passwordForm = reactive({ old_password: '', new_password: '', confirm_password: '' });
+            const accountInfo = reactive({ created_at: '', last_login_at: '', last_login_ip: '', aff_code: '' });
+
+            const inviteLink = computed(function() {
+                if (!accountInfo.aff_code) return '-';
+                return window.location.origin + '/user/register?invite=' + accountInfo.aff_code;
+            });
+
+            function copyText(text) {
+                if (!text || text === '-') return;
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(text).then(function() {
+                        TDesign.MessagePlugin.success('已复制到剪贴板');
+                    }).catch(function() {
+                        fallbackCopy(text);
+                    });
+                } else {
+                    fallbackCopy(text);
+                }
+            }
+
+            function fallbackCopy(text) {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                TDesign.MessagePlugin.success('已复制到剪贴板');
+            }
+
+            function fetchProfile() {
+                axios.get('/api/user/profile').then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        profileForm.username = data.username || '';
+                        profileForm.display_name = data.display_name || '';
+                        profileForm.email = data.email || '';
+                        accountInfo.created_at = data.created_at || '';
+                        accountInfo.last_login_at = data.last_login_at || '';
+                        accountInfo.last_login_ip = data.last_login_ip || '';
+                        accountInfo.aff_code = data.aff_code || '';
+                    }
+                });
+            }
+
+            function handleUpdateProfile() {
+                profileSaving.value = true;
+                axios.put('/api/user/profile', {
+                    display_name: profileForm.display_name,
+                    email: profileForm.email
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('保存成功');
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '保存失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { profileSaving.value = false; });
+            }
+
+            function handleChangePassword() {
+                if (!passwordForm.old_password || !passwordForm.new_password) {
+                    TDesign.MessagePlugin.warning('请填写旧密码和新密码');
+                    return;
+                }
+                if (passwordForm.new_password.length < 6) {
+                    TDesign.MessagePlugin.warning('新密码长度不能少于6个字符');
+                    return;
+                }
+                if (passwordForm.new_password !== passwordForm.confirm_password) {
+                    TDesign.MessagePlugin.warning('两次输入的新密码不一致');
+                    return;
+                }
+                passwordSaving.value = true;
+                axios.put('/api/user/profile/password', {
+                    old_password: passwordForm.old_password,
+                    new_password: passwordForm.new_password
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('密码修改成功');
+                        passwordForm.old_password = '';
+                        passwordForm.new_password = '';
+                        passwordForm.confirm_password = '';
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '修改失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { passwordSaving.value = false; });
+            }
+
+            onMounted(function() { fetchProfile(); });
+
+            return {
+                profileForm, passwordForm, accountInfo,
+                profileSaving, passwordSaving,
+                handleUpdateProfile, handleChangePassword,
+                inviteLink, copyText
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

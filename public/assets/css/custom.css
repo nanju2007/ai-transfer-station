@@ -1,0 +1,16 @@
+/* 按钮方形化 */
+.t-button { border-radius: 2px !important; }
+button, .btn { border-radius: 2px !important; }
+
+/* TDesign 主色调改为 #0055ff */
+.t-button--theme-primary { background-color: #0055ff !important; border-color: #0055ff !important; }
+.t-button--theme-primary:hover:not(:disabled) { background-color: #0044cc !important; border-color: #0044cc !important; }
+.t-button--variant-outline.t-button--theme-primary { color: #0055ff !important; border-color: #0055ff !important; }
+.t-link--theme-primary { color: #0055ff !important; }
+.t-tag--theme-primary { background-color: #0055ff !important; }
+.t-switch.t-is-checked .t-switch__handle { background-color: #0055ff !important; }
+
+/* 前台自定义按钮 */
+.cta-primary { background-color: #0055ff !important; border-radius: 2px !important; }
+.cta-primary:hover { background-color: #0044cc !important; }
+.cta-secondary { border-color: #0055ff !important; color: #0055ff !important; border-radius: 2px !important; }

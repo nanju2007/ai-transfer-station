@@ -1,0 +1,347 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 近期动态（公告） -->
+    <div v-if="announcements.length > 0" class="content-card" style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <div style="font-size:15px;font-weight:600;color:#1a1a1a;">近期动态</div>
+            <t-link theme="primary" style="font-size:13px;" @click="showAllAnnouncements">全部公告</t-link>
+        </div>
+        <div v-for="item in visibleAnnouncements" :key="item.id"
+             style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f5f5f5;cursor:pointer;"
+             @click="openAnnouncementDetail(item)">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
+                <t-tag theme="primary" variant="light" size="small" style="flex-shrink:0;">通知</t-tag>
+                <span style="font-size:13px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ item.title }}</span>
+            </div>
+            <span style="font-size:12px;color:#999;flex-shrink:0;margin-left:12px;">{{ formatShortDate(item.created_at) }}</span>
+        </div>
+    </div>
+
+    <!-- 公告详情 Dialog -->
+    <t-dialog v-model:visible="announcementDialogVisible" :header="currentAnnouncement.title" width="600px" :footer="false">
+        <div style="line-height:1.8;color:#333;white-space:pre-wrap;max-height:420px;overflow-y:auto;font-size:14px;">{{ currentAnnouncement.content }}</div>
+        <div style="font-size:12px;color:#999;margin-top:16px;border-top:1px solid #f0f0f0;padding-top:12px;">发布时间：{{ formatDate(currentAnnouncement.created_at) }}</div>
+    </t-dialog>
+
+    <!-- 全部公告 Dialog -->
+    <t-dialog v-model:visible="allAnnouncementsVisible" header="全部公告" width="660px" :footer="false">
+        <div v-for="item in announcements" :key="item.id"
+             style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f5f5f5;cursor:pointer;"
+             @click="openAnnouncementDetailFromAll(item)">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">
+                <t-tag theme="primary" variant="light" size="small" style="flex-shrink:0;">通知</t-tag>
+                <span style="font-size:13px;color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ item.title }}</span>
+            </div>
+            <span style="font-size:12px;color:#999;flex-shrink:0;margin-left:12px;">{{ formatShortDate(item.created_at) }}</span>
+        </div>
+    </t-dialog>
+
+    <!-- 签到区域 -->
+    <div v-if="checkinEnabled" class="content-card" style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+                <div style="font-size:14px;font-weight:500;margin-bottom:8px;">每日签到</div>
+                <div style="font-size:13px;color:#666;">
+                    本月已签到 <span style="color:#0052d9;font-weight:500;">{{ checkinStatus.monthly_count || 0 }}</span> 天，
+                    累计获得 <span style="color:#0052d9;font-weight:500;">¥{{ Number(checkinStatus.monthly_amount || 0).toFixed(4) }}</span>
+                </div>
+            </div>
+            <div>
+                <t-button v-if="!checkinStatus.checked_in" theme="primary" @click="handleCheckin" :loading="checkinLoading">签到</t-button>
+                <t-button v-else theme="default" disabled>已签到</t-button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div class="stat-cards">
+        <div class="stat-card">
+            <div class="label">今日请求数</div>
+            <div class="value">{{ stats.today_requests }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">今日消费</div>
+            <div class="value">¥{{ Number(stats.today_consumption || 0).toFixed(6) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总消费</div>
+            <div class="value">¥{{ Number(stats.total_consumption || 0).toFixed(4) }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">当前余额</div>
+            <div class="value">¥{{ Number(stats.balance || 0).toFixed(4) }}</div>
+        </div>
+    </div>
+
+    <!-- 图表区域 -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        <div class="content-card">
+            <div style="font-size:14px;font-weight:500;margin-bottom:12px;">30天请求趋势</div>
+            <div id="trend-chart" style="height: 300px;"></div>
+        </div>
+        <div class="content-card">
+            <div style="font-size:14px;font-weight:500;margin-bottom:12px;">模型使用占比</div>
+            <div id="model-chart" style="height: 300px;"></div>
+        </div>
+    </div>
+
+    <!-- 最近使用记录 -->
+    <div class="content-card">
+        <div style="font-size:14px;font-weight:500;margin-bottom:12px;">最近使用记录</div>
+        <t-table :data="recentLogs" :columns="logColumns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #cost="{ row }">
+                ¥{{ row.cost ? Number(row.cost).toFixed(6) : '0.000000' }}
+            </template>
+            <template #is_stream="{ row }">
+                <t-tag v-if="row.is_stream" theme="primary" variant="light">流式</t-tag>
+                <t-tag v-else variant="light">非流式</t-tag>
+            </template>
+            <template #created_at="{ row }">
+                {{ formatDate(row.created_at) }}
+            </template>
+        </t-table>
+    </div>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, computed, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const announcements = ref([]);
+            const announcementDialogVisible = ref(false);
+            const allAnnouncementsVisible = ref(false);
+            const currentAnnouncement = reactive({ title: '', content: '', created_at: '' });
+            const checkinEnabled = ref(false);
+            const checkinLoading = ref(false);
+            const checkinStatus = reactive({ checked_in: false, monthly_count: 0, monthly_amount: 0 });
+
+            const visibleAnnouncements = computed(function() {
+                return announcements.value.slice(0, 5);
+            });
+
+            function openAnnouncementDetail(item) {
+                currentAnnouncement.title = item.title;
+                currentAnnouncement.content = item.content || '';
+                currentAnnouncement.created_at = item.created_at;
+                announcementDialogVisible.value = true;
+            }
+
+            function openAnnouncementDetailFromAll(item) {
+                allAnnouncementsVisible.value = false;
+                setTimeout(function() {
+                    openAnnouncementDetail(item);
+                }, 200);
+            }
+
+            function showAllAnnouncements() {
+                allAnnouncementsVisible.value = true;
+            }
+            const stats = reactive({
+                today_requests: 0,
+                today_consumption: 0,
+                total_consumption: 0,
+                balance: 0
+            });
+            const recentLogs = ref([]);
+
+            const logColumns = [
+                { colKey: 'model_name', title: '模型', width: 180 },
+                { colKey: 'prompt_tokens', title: '输入Token', width: 100 },
+                { colKey: 'completion_tokens', title: '输出Token', width: 100 },
+                { colKey: 'cost', title: '费用(元)', width: 100, cell: 'cost' },
+                { colKey: 'token_name', title: '令牌', width: 120 },
+                { colKey: 'use_time', title: '耗时(ms)', width: 90 },
+                { colKey: 'is_stream', title: '类型', width: 80, cell: 'is_stream' },
+                { colKey: 'created_at', title: '时间', width: 170, cell: 'created_at' }
+            ];
+
+            function formatDate(dateStr) {
+                if (!dateStr) return '-';
+                var d = new Date(dateStr);
+                if (isNaN(d.getTime())) return '-';
+                return d.getFullYear() + '-' +
+                    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getDate()).padStart(2, '0') + ' ' +
+                    String(d.getHours()).padStart(2, '0') + ':' +
+                    String(d.getMinutes()).padStart(2, '0') + ':' +
+                    String(d.getSeconds()).padStart(2, '0');
+            }
+
+            function formatShortDate(dateStr) {
+                if (!dateStr) return '-';
+                var d = new Date(dateStr);
+                if (isNaN(d.getTime())) return '-';
+                return d.getFullYear() + '-' +
+                    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getDate()).padStart(2, '0');
+            }
+
+            // 全平台弹窗：检查今天是否已弹出过，若没有则依次弹出所有 popup=1 的公告
+            function checkPopupAnnouncements(list) {
+                var today = new Date();
+                var todayStr = today.getFullYear() + '-' +
+                    String(today.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(today.getDate()).padStart(2, '0');
+                var popupList = list.filter(function(a) { return a.popup === 1 || a.popup === '1'; });
+                if (popupList.length === 0) return;
+
+                var shownKey = 'announcement_popup_shown_' + todayStr;
+                var shownIds = JSON.parse(localStorage.getItem(shownKey) || '[]');
+                var pendingPopups = popupList.filter(function(a) { return shownIds.indexOf(a.id) === -1; });
+                if (pendingPopups.length === 0) return;
+
+                // 记录今天已弹出
+                var newShown = shownIds.concat(pendingPopups.map(function(a) { return a.id; }));
+                localStorage.setItem(shownKey, JSON.stringify(newShown));
+
+                // 依次弹出（每隔300ms弹下一条）
+                var idx = 0;
+                function showNext() {
+                    if (idx >= pendingPopups.length) return;
+                    var item = pendingPopups[idx++];
+                    currentAnnouncement.title = item.title;
+                    currentAnnouncement.content = item.content || '';
+                    currentAnnouncement.created_at = item.created_at;
+                    announcementDialogVisible.value = true;
+                    // 等待用户关闭后再弹下一条
+                }
+                setTimeout(showNext, 500);
+            }
+
+            function initTrendChart(trend) {
+                var chart = echarts.init(document.getElementById('trend-chart'));
+                chart.setOption({
+                    tooltip: { trigger: 'axis' },
+                    grid: { left: 50, right: 20, top: 20, bottom: 30 },
+                    xAxis: {
+                        type: 'category',
+                        data: trend.map(function(item) { return item.date.substring(5); }),
+                        axisLabel: { fontSize: 11 }
+                    },
+                    yAxis: { type: 'value', minInterval: 1 },
+                    series: [{
+                        type: 'line',
+                        data: trend.map(function(item) { return item.count; }),
+                        smooth: true,
+                        itemStyle: { color: '#0052d9' },
+                        areaStyle: { color: 'rgba(0,82,217,0.1)' }
+                    }]
+                });
+                window.addEventListener('resize', function() { chart.resize(); });
+            }
+
+            function initModelChart(modelUsage) {
+                var chart = echarts.init(document.getElementById('model-chart'));
+                chart.setOption({
+                    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+                    series: [{
+                        type: 'pie',
+                        radius: ['40%', '70%'],
+                        label: { fontSize: 11 },
+                        data: modelUsage.map(function(item) {
+                            return { name: item.model_name, value: item.count };
+                        })
+                    }]
+                });
+                window.addEventListener('resize', function() { chart.resize(); });
+            }
+
+            function fetchDashboard() {
+                loading.value = true;
+                axios.get('/api/user/dashboard').then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        stats.today_requests = data.today_requests;
+                        stats.today_consumption = data.today_consumption;
+                        stats.total_consumption = data.total_consumption;
+                        stats.balance = data.balance;
+                        initTrendChart(data.trend || []);
+                        initModelChart(data.model_usage || []);
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function fetchRecentLogs() {
+                axios.get('/api/user/dashboard/recent-logs').then(function(res) {
+                    if (res.data.code === 0) {
+                        recentLogs.value = res.data.data;
+                    }
+                });
+            }
+
+            function fetchAnnouncements() {
+                axios.get('/api/public/announcements').then(function(res) {
+                    if (res.data.code === 0) {
+                        var list = res.data.data || [];
+                        announcements.value = list;
+                        checkPopupAnnouncements(list);
+                    }
+                });
+            }
+
+            function fetchPublicSettings() {
+                axios.get('/api/public/settings').then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        if (data.checkin_enabled === 'true' || data.checkin_enabled === true) {
+                            checkinEnabled.value = true;
+                            fetchCheckinStatus();
+                        }
+                    }
+                });
+            }
+
+            function fetchCheckinStatus() {
+                axios.get('/api/user/checkin/status').then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        checkinStatus.checked_in = data.checked_in || false;
+                        checkinStatus.monthly_count = data.monthly_count || 0;
+                        checkinStatus.monthly_amount = data.monthly_amount || 0;
+                    }
+                });
+            }
+
+            function handleCheckin() {
+                checkinLoading.value = true;
+                axios.post('/api/user/checkin').then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        TDesign.MessagePlugin.success('签到成功，获得 ¥' + Number(data.amount || 0).toFixed(4));
+                        checkinStatus.checked_in = true;
+                        checkinStatus.monthly_count = data.monthly_count || (checkinStatus.monthly_count + 1);
+                        checkinStatus.monthly_amount = data.monthly_amount || checkinStatus.monthly_amount;
+                        fetchDashboard();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '签到失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { checkinLoading.value = false; });
+            }
+
+            onMounted(function() {
+                fetchAnnouncements();
+                fetchPublicSettings();
+                fetchDashboard();
+                fetchRecentLogs();
+            });
+
+            return {
+                loading, stats, recentLogs, logColumns, formatDate, formatShortDate,
+                announcements, visibleAnnouncements,
+                announcementDialogVisible, allAnnouncementsVisible, currentAnnouncement,
+                openAnnouncementDetail, openAnnouncementDetailFromAll, showAllAnnouncements,
+                checkinEnabled, checkinLoading, checkinStatus, handleCheckin
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

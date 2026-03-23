@@ -1,0 +1,327 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<style>
+.ticket-cards { display: flex; flex-direction: column; gap: 12px; }
+.ticket-card { background: #fff; border-radius: 6px; padding: 16px 20px; cursor: pointer; border: 1px solid #e7e7e7; transition: all 0.2s; }
+.ticket-card:hover { border-color: #0052d9; box-shadow: 0 2px 8px rgba(0,82,217,0.08); }
+.ticket-card .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ticket-card .card-title { font-size: 15px; font-weight: 500; color: #333; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ticket-card .card-meta { display: flex; align-items: center; gap: 16px; font-size: 12px; color: #999; }
+.chat-container { display: flex; flex-direction: column; gap: 16px; padding: 16px 0; max-height: 480px; overflow-y: auto; }
+.chat-bubble { max-width: 75%; padding: 10px 14px; border-radius: 8px; font-size: 14px; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
+.chat-row { display: flex; flex-direction: column; }
+.chat-row.user { align-items: flex-end; }
+.chat-row.admin { align-items: flex-start; }
+.chat-row .chat-info { font-size: 12px; color: #999; margin-bottom: 4px; padding: 0 4px; }
+.chat-bubble.user { background: #0052d9; color: #fff; border-bottom-right-radius: 2px; }
+.chat-bubble.admin { background: #f3f3f3; color: #333; border-bottom-left-radius: 2px; }
+.reply-box { display: flex; gap: 12px; align-items: flex-end; margin-top: 12px; padding-top: 12px; border-top: 1px solid #e7e7e7; }
+.reply-box .t-textarea__inner { min-height: 60px !important; }
+.detail-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.detail-info { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; color: #666; }
+.empty-tickets { text-align: center; padding: 60px 0; color: #999; }
+.empty-tickets svg { width: 64px; height: 64px; margin-bottom: 16px; color: #ddd; }
+</style>
+
+<div id="page-app">
+    <!-- 工单列表视图 -->
+    <div v-if="!showDetail">
+        <div class="toolbar">
+            <t-radio-group v-model="filterStatus" variant="default-filled" size="small" @change="onFilterChange">
+                <t-radio-button value="">全部</t-radio-button>
+                <t-radio-button value="pending">待处理</t-radio-button>
+                <t-radio-button value="processing">处理中</t-radio-button>
+                <t-radio-button value="resolved">已解决</t-radio-button>
+                <t-radio-button value="closed">已关闭</t-radio-button>
+            </t-radio-group>
+            <div class="spacer"></div>
+            <t-button theme="primary" @click="createDialogVisible = true">
+                <template #icon><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></template>
+                新建工单
+            </t-button>
+        </div>
+
+        <!-- 工单卡片列表 -->
+        <div v-if="loading" style="text-align:center;padding:40px 0;">
+            <t-loading size="small" text="加载中..." />
+        </div>
+        <div v-else-if="tickets.length === 0" class="empty-tickets">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            <div>暂无工单，如有问题请提交工单</div>
+        </div>
+        <div v-else class="ticket-cards">
+            <div class="ticket-card" v-for="item in tickets" :key="item.id" @click="openDetail(item.id)">
+                <div class="card-header">
+                    <span class="card-title">{{ item.title }}</span>
+                    <t-tag :theme="statusTheme(item.status)" size="small" variant="light">{{ statusText(item.status) }}</t-tag>
+                    <t-tag size="small" variant="outline">{{ categoryText(item.category) }}</t-tag>
+                </div>
+                <div class="card-meta">
+                    <span>创建：{{ formatDate(item.created_at) }}</span>
+                    <span v-if="item.last_reply_at">最后回复：{{ formatDate(item.last_reply_at) }}</span>
+                    <span>#{{ item.id }}</span>
+                </div>
+            </div>
+        </div>
+        <div class="pagination" v-if="pagination.total > pagination.pageSize">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper />
+        </div>
+    </div>
+
+    <!-- 工单详情视图 -->
+    <div v-if="showDetail">
+        <div class="detail-header">
+            <t-button theme="default" variant="text" @click="backToList">
+                <template #icon><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></template>
+                返回列表
+            </t-button>
+            <span style="font-size:16px;font-weight:500;">{{ currentTicket.title }}</span>
+        </div>
+        <div class="content-card">
+            <div class="detail-info">
+                <t-tag :theme="statusTheme(currentTicket.status)" size="small" variant="light">{{ statusText(currentTicket.status) }}</t-tag>
+                <t-tag size="small" variant="outline">{{ categoryText(currentTicket.category) }}</t-tag>
+                <span>创建时间：{{ formatDate(currentTicket.created_at) }}</span>
+                <span>工单编号：#{{ currentTicket.id }}</span>
+            </div>
+
+            <!-- 对话记录 -->
+            <div class="chat-container" ref="chatContainer">
+                <div v-for="reply in replies" :key="reply.id" class="chat-row" :class="reply.is_admin ? 'admin' : 'user'">
+                    <div class="chat-info">
+                        <span>{{ reply.is_admin ? '客服' : '我' }}</span>
+                        <span style="margin-left:8px;">{{ formatDate(reply.created_at) }}</span>
+                    </div>
+                    <div class="chat-bubble" :class="reply.is_admin ? 'admin' : 'user'">{{ reply.content }}</div>
+                </div>
+            </div>
+
+            <!-- 底部操作区 -->
+            <div v-if="currentTicket.status !== 'closed'">
+                <div class="reply-box">
+                    <t-textarea v-model="replyContent" placeholder="输入回复内容..." :maxlength="2000" :autosize="{ minRows: 2, maxRows: 6 }" style="flex:1;" />
+                    <t-button theme="primary" @click="handleReply" :loading="replying" :disabled="!replyContent.trim()">发送</t-button>
+                </div>
+                <div style="margin-top:12px;text-align:right;">
+                    <t-button theme="danger" variant="text" size="small" @click="handleClose">关闭工单</t-button>
+                </div>
+            </div>
+            <div v-else style="text-align:center;padding:16px 0;color:#999;border-top:1px solid #e7e7e7;margin-top:12px;">
+                工单已关闭，无法继续回复
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建工单对话框 -->
+    <t-dialog v-model:visible="createDialogVisible" header="新建工单" :confirm-btn="{ content: '提交', theme: 'primary', loading: creating }" @confirm="handleCreate" :on-close="resetCreateForm" width="560px">
+        <t-form :data="createForm" ref="createFormRef" label-width="80px">
+            <t-form-item label="标题" name="title">
+                <t-input v-model="createForm.title" placeholder="请输入工单标题" :maxlength="100" show-limit-number />
+            </t-form-item>
+            <t-form-item label="分类" name="category">
+                <t-select v-model="createForm.category" placeholder="请选择分类">
+                    <t-option value="general" label="一般咨询" />
+                    <t-option value="billing" label="账单相关" />
+                    <t-option value="technical" label="技术问题" />
+                    <t-option value="suggestion" label="建议反馈" />
+                </t-select>
+            </t-form-item>
+            <t-form-item label="问题描述" name="content">
+                <t-textarea v-model="createForm.content" placeholder="请详细描述您的问题..." :maxlength="2000" show-limit-number :autosize="{ minRows: 4, maxRows: 6 }" />
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    var createApp = Vue.createApp;
+    var ref = Vue.ref;
+    var reactive = Vue.reactive;
+    var onMounted = Vue.onMounted;
+    var nextTick = Vue.nextTick;
+
+    var STATUS_MAP = { pending: '待处理', processing: '处理中', resolved: '已解决', closed: '已关闭' };
+    var STATUS_THEME = { pending: 'warning', processing: 'primary', resolved: 'success', closed: 'default' };
+    var CATEGORY_MAP = { general: '一般咨询', billing: '账单相关', technical: '技术问题', suggestion: '建议反馈' };
+
+    var app = createApp({
+        setup() {
+            var loading = ref(false);
+            var creating = ref(false);
+            var replying = ref(false);
+            var showDetail = ref(false);
+            var createDialogVisible = ref(false);
+            var filterStatus = ref('');
+            var replyContent = ref('');
+            var chatContainer = ref(null);
+
+            var tickets = ref([]);
+            var replies = ref([]);
+            var currentTicket = reactive({ id: '', title: '', status: '', category: '', created_at: '' });
+            var pagination = reactive({ current: 1, total: 0, pageSize: 15 });
+            var createForm = reactive({ title: '', category: 'general', content: '' });
+
+            function statusText(s) { return STATUS_MAP[s] || s; }
+            function statusTheme(s) { return STATUS_THEME[s] || 'default'; }
+            function categoryText(c) { return CATEGORY_MAP[c] || c; }
+
+            function formatDate(dateStr) {
+                if (!dateStr) return '-';
+                var d = new Date(dateStr);
+                if (isNaN(d.getTime())) return '-';
+                return d.getFullYear() + '-' +
+                    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getDate()).padStart(2, '0') + ' ' +
+                    String(d.getHours()).padStart(2, '0') + ':' +
+                    String(d.getMinutes()).padStart(2, '0');
+            }
+
+            function scrollToBottom() {
+                nextTick(function() {
+                    var el = chatContainer.value;
+                    if (el) el.scrollTop = el.scrollHeight;
+                });
+            }
+
+            function fetchTickets() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (filterStatus.value) params.status = filterStatus.value;
+                axios.get('/api/user/tickets/list', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tickets.value = res.data.data.list || [];
+                        pagination.total = res.data.data.total || 0;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function openDetail(id) {
+                axios.get('/api/user/tickets/detail', { params: { id: id } }).then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        Object.assign(currentTicket, data.ticket);
+                        replies.value = data.replies || [];
+                        showDetail.value = true;
+                        scrollToBottom();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '获取详情失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                });
+            }
+
+            function backToList() {
+                showDetail.value = false;
+                replyContent.value = '';
+                fetchTickets();
+            }
+
+            function onFilterChange() {
+                pagination.current = 1;
+                fetchTickets();
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchTickets();
+            }
+
+            function handleCreate() {
+                if (!createForm.title.trim()) {
+                    TDesign.MessagePlugin.warning('请输入工单标题');
+                    return;
+                }
+                if (!createForm.content.trim()) {
+                    TDesign.MessagePlugin.warning('请输入问题描述');
+                    return;
+                }
+                creating.value = true;
+                axios.post('/api/user/tickets/create', {
+                    title: createForm.title.trim(),
+                    category: createForm.category,
+                    content: createForm.content.trim()
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('工单创建成功');
+                        createDialogVisible.value = false;
+                        resetCreateForm();
+                        fetchTickets();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '创建失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { creating.value = false; });
+            }
+
+            function resetCreateForm() {
+                createForm.title = '';
+                createForm.category = 'general';
+                createForm.content = '';
+            }
+
+            function handleReply() {
+                var content = replyContent.value.trim();
+                if (!content) return;
+                replying.value = true;
+                axios.post('/api/user/tickets/reply', {
+                    ticket_id: currentTicket.id,
+                    content: content
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('回复成功');
+                        replyContent.value = '';
+                        // 重新加载详情
+                        openDetail(currentTicket.id);
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '回复失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { replying.value = false; });
+            }
+
+            function handleClose() {
+                var dialog = TDesign.DialogPlugin.confirm({
+                    header: '确认关闭工单',
+                    body: '关闭后将无法继续回复，确定要关闭此工单吗？',
+                    confirmBtn: { content: '确认关闭', theme: 'danger' },
+                    onConfirm: function() {
+                        dialog.hide();
+                        axios.post('/api/user/tickets/close', { id: currentTicket.id }).then(function(res) {
+                            if (res.data.code === 0) {
+                                TDesign.MessagePlugin.success('工单已关闭');
+                                currentTicket.status = 'closed';
+                            } else {
+                                TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                            }
+                        }).catch(function(err) {
+                            TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                        });
+                    }
+                });
+            }
+
+            onMounted(function() {
+                fetchTickets();
+            });
+
+            return {
+                loading, creating, replying, showDetail, createDialogVisible,
+                filterStatus, replyContent, chatContainer,
+                tickets, replies, currentTicket, pagination, createForm,
+                statusText, statusTheme, categoryText, formatDate,
+                fetchTickets, openDetail, backToList, onFilterChange, onPageChange,
+                handleCreate, resetCreateForm, handleReply, handleClose
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

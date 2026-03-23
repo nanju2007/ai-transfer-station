@@ -1,0 +1,201 @@
+<?php $currentPage = 'announcements'; $pageTitle = '公告管理'; ?>
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <div class="content-card">
+        <div class="toolbar">
+            <t-button theme="primary" @click="openCreate">新建公告</t-button>
+            <div class="spacer"></div>
+            <t-input v-model="keyword" placeholder="搜索公告" style="width:240px;" @enter="fetchList">
+                <template #suffixIcon>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="cursor:pointer;" @click="fetchList"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                </template>
+            </t-input>
+        </div>
+
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #content="{ row }">
+                <span>{{ row.content && row.content.length > 60 ? row.content.substring(0, 60) + '...' : row.content }}</span>
+            </template>
+            <template #status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">显示</t-tag>
+                <t-tag v-else theme="default" variant="light">隐藏</t-tag>
+            </template>
+            <template #popup="{ row }">
+                <t-tag v-if="row.popup === 1" theme="warning" variant="light">弹出</t-tag>
+                <t-tag v-else theme="default" variant="light">关闭</t-tag>
+            </template>
+            <template #created_at="{ row }">
+                {{ formatDate(row.created_at) }}
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openEdit(row)">编辑</t-link>
+                    <t-popconfirm content="确定删除该公告？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper></t-pagination>
+        </div>
+    </div>
+
+    <!-- 新建/编辑对话框 -->
+    <t-dialog v-model:visible="dialogVisible" :header="dialogTitle" width="560px" :confirm-on-enter="false"
+        @confirm="handleSubmit" :confirm-btn="{ loading: saving }">
+        <t-form :data="form" label-width="80px">
+            <t-form-item label="标题">
+                <t-input v-model="form.title" placeholder="请输入公告标题"></t-input>
+            </t-form-item>
+            <t-form-item label="内容">
+                <t-textarea v-model="form.content" placeholder="请输入公告内容" :autosize="{ minRows: 4, maxRows: 10 }"></t-textarea>
+            </t-form-item>
+            <t-form-item label="排序">
+                <t-input-number v-model="form.sort" :min="0" style="width:100%;"></t-input-number>
+                <div style="color:#999;font-size:12px;margin-top:4px;">数值越大越靠前</div>
+            </t-form-item>
+            <t-form-item label="状态">
+                <t-switch v-model="form.status" :custom-value="[1, 0]"></t-switch>
+                <span style="margin-left:8px;font-size:13px;color:#666;">{{ form.status === 1 ? '显示' : '隐藏' }}</span>
+            </t-form-item>
+            <t-form-item label="全平台弹出">
+                <t-switch v-model="form.popup" :custom-value="[1, 0]"></t-switch>
+                <span style="margin-left:8px;font-size:13px;color:#666;">{{ form.popup === 1 ? '开启（每天弹出一次）' : '关闭' }}</span>
+                <div style="color:#999;font-size:12px;margin-top:4px;">开启后用户访问仪表盘时每天弹出一次此公告</div>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const saving = ref(false);
+            const keyword = ref('');
+            const tableData = ref([]);
+            const dialogVisible = ref(false);
+            const dialogTitle = ref('新建公告');
+            const editingId = ref(null);
+            const pagination = reactive({ current: 1, total: 0, pageSize: 15 });
+
+            const defaultForm = { title: '', content: '', sort: 0, status: 1, popup: 0 };
+            const form = reactive({ ...defaultForm });
+
+            const columns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'title', title: '标题', width: 200 },
+                { colKey: 'content', title: '内容', cell: 'content' },
+                { colKey: 'sort', title: '排序', width: 80 },
+                { colKey: 'status', title: '状态', width: 80, cell: 'status' },
+                { colKey: 'popup', title: '全平台弹出', width: 110, cell: 'popup' },
+                { colKey: 'created_at', title: '创建时间', width: 170, cell: 'created_at' },
+                { colKey: 'operation', title: '操作', width: 140, cell: 'operation', fixed: 'right' }
+            ];
+
+            function formatDate(dateStr) {
+                if (!dateStr) return '-';
+                var d = new Date(dateStr);
+                if (isNaN(d.getTime())) return '-';
+                return d.getFullYear() + '-' +
+                    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getDate()).padStart(2, '0') + ' ' +
+                    String(d.getHours()).padStart(2, '0') + ':' +
+                    String(d.getMinutes()).padStart(2, '0') + ':' +
+                    String(d.getSeconds()).padStart(2, '0');
+            }
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (keyword.value) params.keyword = keyword.value;
+                axios.get('/api/admin/announcements', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                        pagination.total = res.data.data.total;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            function openCreate() {
+                Object.assign(form, defaultForm);
+                editingId.value = null;
+                dialogTitle.value = '新建公告';
+                dialogVisible.value = true;
+            }
+
+            function openEdit(row) {
+                editingId.value = row.id;
+                dialogTitle.value = '编辑公告';
+                form.title = row.title;
+                form.content = row.content;
+                form.sort = row.sort;
+                form.status = row.status;
+                form.popup = row.popup || 0;
+                dialogVisible.value = true;
+            }
+
+            function handleSubmit() {
+                if (!form.title) {
+                    TDesign.MessagePlugin.warning('请输入公告标题');
+                    return;
+                }
+                saving.value = true;
+                var data = { ...form };
+                var promise;
+                if (editingId.value) {
+                    promise = axios.put('/api/admin/announcements/' + editingId.value, data);
+                } else {
+                    promise = axios.post('/api/admin/announcements', data);
+                }
+                promise.then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(editingId.value ? '更新成功' : '创建成功');
+                        dialogVisible.value = false;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.message || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.message || '请求失败');
+                }).finally(function() { saving.value = false; });
+            }
+
+            function handleDelete(row) {
+                axios.delete('/api/admin/announcements/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.message || '删除失败');
+                    }
+                });
+            }
+
+            onMounted(function() {
+                fetchList();
+            });
+
+            return {
+                loading, saving, keyword, tableData, columns, pagination, formatDate,
+                dialogVisible, dialogTitle, form, editingId,
+                fetchList, onPageChange, openCreate, openEdit, handleSubmit, handleDelete
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

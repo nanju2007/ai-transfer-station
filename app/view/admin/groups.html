@@ -1,0 +1,178 @@
+<?php $currentPage = 'groups'; $pageTitle = '分组管理'; ?>
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <t-input v-model="searchKeyword" placeholder="搜索分组标识/名称" style="width: 240px;" @enter="fetchList" clearable></t-input>
+        <t-button theme="primary" @click="fetchList">搜索</t-button>
+        <div class="spacer"></div>
+        <t-button theme="primary" @click="openCreate">新建分组</t-button>
+    </div>
+
+    <!-- 表格 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #ratio="{ row }">
+                <t-tag v-if="row.ratio === 1" theme="success" variant="light">{{ row.ratio }}x</t-tag>
+                <t-tag v-else-if="row.ratio > 1" theme="danger" variant="light">{{ row.ratio }}x</t-tag>
+                <t-tag v-else theme="primary" variant="light">{{ row.ratio }}x</t-tag>
+            </template>
+            <template #status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">启用</t-tag>
+                <t-tag v-else theme="danger" variant="light">禁用</t-tag>
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openEdit(row)">编辑</t-link>
+                    <t-popconfirm v-if="row.name === 'default'" content="默认分组不能删除" :confirm-btn="null" cancel-btn="知道了">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                    <t-popconfirm v-else content="确定删除该分组？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+    </div>
+
+    <!-- 新建/编辑对话框 -->
+    <t-dialog v-model:visible="dialogVisible" :header="dialogTitle" width="520px" :confirm-on-enter="false"
+        @confirm="handleSubmit" :confirm-btn="{ loading: submitting }">
+        <t-form :data="formData" label-width="90px">
+            <t-form-item label="分组标识" name="name">
+                <t-input v-model="formData.name" placeholder="如 default、vip" :disabled="editingId && formData.name === 'default'"></t-input>
+            </t-form-item>
+            <t-form-item label="显示名称" name="display_name">
+                <t-input v-model="formData.display_name" placeholder="如 默认分组、VIP分组"></t-input>
+            </t-form-item>
+            <t-form-item label="倍率" name="ratio">
+                <t-input-number v-model="formData.ratio" :step="0.1" :min="0.01" :decimal-places="2" style="width: 100%;"></t-input-number>
+            </t-form-item>
+            <t-form-item label="描述" name="description">
+                <t-textarea v-model="formData.description" placeholder="分组描述信息" :autosize="{ minRows: 2, maxRows: 4 }"></t-textarea>
+            </t-form-item>
+            <t-form-item label="排序" name="sort">
+                <t-input-number v-model="formData.sort" :min="0" style="width: 100%;"></t-input-number>
+            </t-form-item>
+            <t-form-item label="状态" name="status">
+                <t-switch v-model="formData.status" :custom-value="[1, 0]"></t-switch>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const submitting = ref(false);
+            const tableData = ref([]);
+            const searchKeyword = ref('');
+            const dialogVisible = ref(false);
+            const dialogTitle = ref('新建分组');
+            const editingId = ref(null);
+
+            const defaultForm = { name: '', display_name: '', ratio: 1, description: '', sort: 0, status: 1 };
+            const formData = reactive({ ...defaultForm });
+
+            const columns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'name', title: '分组标识', width: 120 },
+                { colKey: 'display_name', title: '显示名称', width: 140 },
+                { colKey: 'ratio', title: '倍率', width: 90, cell: 'ratio' },
+                { colKey: 'description', title: '描述', ellipsis: true },
+                { colKey: 'sort', title: '排序', width: 70 },
+                { colKey: 'status', title: '状态', width: 80, cell: 'status' },
+                { colKey: 'operation', title: '操作', width: 120, cell: 'operation', fixed: 'right' }
+            ];
+
+            function fetchList() {
+                loading.value = true;
+                var params = {};
+                if (searchKeyword.value) params.keyword = searchKeyword.value;
+
+                axios.get('/api/admin/groups', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function openCreate() {
+                Object.assign(formData, defaultForm);
+                editingId.value = null;
+                dialogTitle.value = '新建分组';
+                dialogVisible.value = true;
+            }
+
+            function openEdit(row) {
+                editingId.value = row.id;
+                dialogTitle.value = '编辑分组';
+                formData.name = row.name;
+                formData.display_name = row.display_name || '';
+                formData.ratio = row.ratio;
+                formData.description = row.description || '';
+                formData.sort = row.sort || 0;
+                formData.status = row.status;
+                dialogVisible.value = true;
+            }
+
+            function handleSubmit() {
+                if (!formData.name || !formData.display_name) {
+                    TDesign.MessagePlugin.warning('分组标识和显示名称不能为空');
+                    return;
+                }
+                submitting.value = true;
+                var data = { ...formData };
+                var promise;
+                if (editingId.value) {
+                    promise = axios.put('/api/admin/groups/' + editingId.value, data);
+                } else {
+                    promise = axios.post('/api/admin/groups', data);
+                }
+                promise.then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(editingId.value ? '更新成功' : '创建成功');
+                        dialogVisible.value = false;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.message || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.message || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            function handleDelete(row) {
+                if (row.name === 'default') {
+                    TDesign.MessagePlugin.warning('默认分组不能删除');
+                    return;
+                }
+                axios.delete('/api/admin/groups/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.message || '删除失败');
+                    }
+                });
+            }
+
+            onMounted(function() { fetchList(); });
+
+            return {
+                loading, submitting, tableData, columns, searchKeyword,
+                dialogVisible, dialogTitle, formData, editingId,
+                fetchList, openCreate, openEdit, handleSubmit, handleDelete
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

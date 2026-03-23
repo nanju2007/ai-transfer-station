@@ -1,0 +1,640 @@
+<?php $currentPage = 'settings'; $pageTitle = '系统设置'; ?>
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <div class="content-card">
+        <t-tabs v-model="activeTab" @change="onTabChange">
+            <!-- 网站设置 -->
+            <t-tab-panel value="site" label="网站设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="siteForm" label-width="120px">
+                        <t-form-item label="站点名称" help="显示在页面标题和导航栏中">
+                            <t-input v-model="siteForm.site_name" placeholder="请输入站点名称"></t-input>
+                        </t-form-item>
+                        <t-form-item label="站点Logo" help="显示在导航栏左上角，建议使用 URL 链接，留空则显示默认图标">
+                            <t-input v-model="siteForm.site_logo" placeholder="Logo URL地址"></t-input>
+                        </t-form-item>
+                        <t-form-item label="页脚信息" help="支持 HTML 格式，显示在页面底部">
+                            <t-textarea v-model="siteForm.site_footer" placeholder="页脚HTML内容" :autosize="{ minRows: 2, maxRows: 4 }"></t-textarea>
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('site', siteForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 日志设置 -->
+            <t-tab-panel value="log" label="日志设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="logForm" label-width="140px">
+                        <t-form-item label="记录详细日志" help="开启后记录请求和响应的详细内容，关闭后仅记录基本信息和计费数据。消费日志（计费记录）始终开启">
+                            <t-switch v-model="logForm.log_detail_enabled" />
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('log', logForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 屏蔽词设置 -->
+            <t-tab-panel value="blocked_words" label="屏蔽词设置">
+                <div style="padding:20px 0;">
+                    <div style="max-width:600px;margin-bottom:20px;">
+                        <t-form :data="blockedWordsConfig" label-width="160px">
+                            <t-form-item label="上游屏蔽词检测" help="检测上游返回内容中是否包含屏蔽词">
+                                <t-switch v-model="blockedWordsConfig.blocked_word_upstream_enabled" />
+                            </t-form-item>
+                            <t-form-item label="输入屏蔽词检测" help="检测用户输入内容中是否包含屏蔽词">
+                                <t-switch v-model="blockedWordsConfig.blocked_word_input_enabled" />
+                            </t-form-item>
+                            <t-form-item>
+                                <t-button theme="primary" :loading="saving" @click="saveOptions('blocked_words', blockedWordsConfig)">保存配置</t-button>
+                            </t-form-item>
+                        </t-form>
+                    </div>
+
+                    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                        <t-button theme="primary" @click="openAddWord">添加屏蔽词</t-button>
+                        <t-button @click="openBatchImport">批量导入</t-button>
+                    </div>
+
+                    <t-table :data="wordTableData" :columns="wordColumns" :loading="wordLoading" row-key="id" :bordered="true" size="small">
+                        <template #type="{ row }">
+                            <t-tag v-if="row.type === 1" theme="primary" variant="light">输入</t-tag>
+                            <t-tag v-else-if="row.type === 2" theme="warning" variant="light">输出</t-tag>
+                            <t-tag v-else theme="success" variant="light">双向</t-tag>
+                        </template>
+                        <template #action="{ row }">
+                            <t-tag v-if="row.action === 1" theme="primary" variant="light">替换</t-tag>
+                            <t-tag v-else-if="row.action === 2" theme="danger" variant="light">拒绝</t-tag>
+                            <t-tag v-else theme="warning" variant="light">记录</t-tag>
+                        </template>
+                        <template #status="{ row }">
+                            <t-tag v-if="row.status === 1" theme="success" variant="light">启用</t-tag>
+                            <t-tag v-else theme="default" variant="light">禁用</t-tag>
+                        </template>
+                        <template #operation="{ row }">
+                            <t-space size="small">
+                                <t-link theme="primary" @click="openEditWord(row)">编辑</t-link>
+                                <t-popconfirm content="确定删除该屏蔽词？" @confirm="handleDeleteWord(row)">
+                                    <t-link theme="danger">删除</t-link>
+                                </t-popconfirm>
+                            </t-space>
+                        </template>
+                    </t-table>
+                    <div class="pagination">
+                        <t-pagination v-model="wordPagination.current" :total="wordPagination.total" :page-size="wordPagination.pageSize"
+                            @current-change="onWordPageChange" show-jumper />
+                    </div>
+                </div>
+            </t-tab-panel>
+
+            <!-- 支付设置 -->
+            <t-tab-panel value="payment" label="支付设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="paymentForm" label-width="120px">
+                        <t-form-item label="支付地址" help="彩虹易支付接口地址，如 https://pay.example.com">
+                            <t-input v-model="paymentForm.pay_address" placeholder="支付接口地址" />
+                        </t-form-item>
+                        <t-form-item label="商户ID" help="支付平台分配的商户编号">
+                            <t-input v-model="paymentForm.pay_id" placeholder="商户ID" />
+                        </t-form-item>
+                        <t-form-item label="商户密钥" help="支付平台分配的通信密钥，请妥善保管">
+                            <t-input v-model="paymentForm.pay_key" type="password" placeholder="商户密钥" />
+                        </t-form-item>
+                        <t-form-item label="支付通道" help="通道名称传给彩虹易支付（如 alipay），显示名称展示给用户（如 支付宝），不填显示名称则直接显示通道名">
+                            <div style="width:100%;">
+                                <div v-if="paymentForm.pay_channels.length > 0" style="display:flex;gap:8px;margin-bottom:6px;font-size:12px;color:#999;">
+                                    <span style="flex:1;">通道名称（传给易支付）</span>
+                                    <span style="flex:1;">显示名称（给用户看，留空则显示通道名）</span>
+                                    <span style="width:48px;"></span>
+                                </div>
+                                <div v-for="(ch, idx) in paymentForm.pay_channels" :key="idx" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
+                                    <div style="flex:1;"><t-input v-model="paymentForm.pay_channels[idx].name" placeholder="如 alipay、wxpay、PayPal" /></div>
+                                    <div style="flex:1;"><t-input v-model="paymentForm.pay_channels[idx].label" placeholder="如 支付宝、微信支付（可留空）" /></div>
+                                    <t-button theme="danger" variant="text" size="small" @click="removePayChannel(idx)">删除</t-button>
+                                </div>
+                                <t-button size="small" @click="addPayChannel">+ 添加通道</t-button>
+                            </div>
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('payment', paymentForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- SMTP设置 -->
+            <t-tab-panel value="smtp" label="SMTP设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="smtpForm" label-width="140px">
+                        <t-form-item label="SMTP服务器" help="邮件发送服务器地址">
+                            <t-input v-model="smtpForm.smtp_server" placeholder="如 smtp.qq.com" />
+                        </t-form-item>
+                        <t-form-item label="SMTP端口" help="常用端口：SSL 465，非SSL 25 或 587">
+                            <t-input-number v-model="smtpForm.smtp_port" :min="1" :max="65535" style="width:100%;" />
+                        </t-form-item>
+                        <t-form-item label="SMTP账号" help="SMTP 登录用户名，通常为邮箱地址">
+                            <t-input v-model="smtpForm.smtp_account" placeholder="登录账号" />
+                        </t-form-item>
+                        <t-form-item label="SMTP密码/Token" help="SMTP 登录密码或授权码（如QQ邮箱需使用授权码）">
+                            <t-input v-model="smtpForm.smtp_token" type="password" placeholder="登录密码或授权码" />
+                        </t-form-item>
+                        <t-form-item label="发件人邮箱" help="发送邮件时显示的发件人地址">
+                            <t-input v-model="smtpForm.smtp_from" placeholder="发件人邮箱地址" />
+                        </t-form-item>
+                        <t-form-item label="加密方式" help="SSL 通常使用 465 端口，TLS 通常使用 587 端口">
+                            <t-select v-model="smtpForm.smtp_encryption">
+                                <t-option value="ssl" label="SSL" />
+                                <t-option value="tls" label="TLS" />
+                            </t-select>
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('smtp', smtpForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 速率限制 -->
+            <t-tab-panel value="rate_limit" label="速率限制">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="rateLimitForm" label-width="180px">
+                        <t-form-item label="全局每分钟请求数" help="0表示不限制">
+                            <t-input-number v-model="rateLimitForm.rate_limit_global" :min="0" style="width:100%;" />
+                        </t-form-item>
+                        <t-form-item label="每用户每分钟请求数" help="0表示不限制">
+                            <t-input-number v-model="rateLimitForm.rate_limit_per_user" :min="0" style="width:100%;" />
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('rate_limit', rateLimitForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 性能设置 -->
+            <t-tab-panel value="performance" label="性能设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="performanceForm" label-width="180px">
+                        <t-form-item label="缓存时间(秒)" help="模型列表、渠道列表等缓存时间，0表示不缓存">
+                            <t-input-number v-model="performanceForm.cache_ttl" :min="0" style="width:100%;" />
+                        </t-form-item>
+                        <t-form-item label="Worker进程数" help="HTTP 工作进程数量，建议设为 CPU 核心数，修改后需重启服务">
+                            <t-input-number v-model="performanceForm.worker_num" :min="1" :max="64" style="width:100%;" />
+                        </t-form-item>
+                        <t-form-item label="自动禁用渠道" help="渠道连续失败达到阈值时自动禁用">
+                            <t-switch v-model="performanceForm.auto_disable_channel_enabled" />
+                        </t-form-item>
+                        <t-form-item label="渠道禁用阈值" help="连续失败次数达到此值时自动禁用渠道">
+                            <t-input-number v-model="performanceForm.channel_disable_threshold" :min="1" style="width:100%;" />
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('performance', performanceForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 额度设置 -->
+            <t-tab-panel value="quota" label="额度设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="quotaForm" label-width="180px">
+                        <t-form-item label="新用户初始额度(元)" help="新用户注册时自动赠送的初始额度，0表示不赠送">
+                            <t-input-number v-model="quotaForm.new_user_initial_balance" :min="0" :decimal-places="4" style="width:100%;"></t-input-number>
+                        </t-form-item>
+                        <t-form-item label="请求预扣费额度(元)" help="请求开始前预扣，结束后多退少补，0表示不预扣">
+                            <t-input-number v-model="quotaForm.pre_deduct_amount" :min="0" :decimal-places="4" style="width:100%;"></t-input-number>
+                        </t-form-item>
+                        <t-form-item label="邀请新用户奖励额度(元)" help="邀请新用户注册成功后，邀请人获得的奖励额度，0表示无奖励">
+                            <t-input-number v-model="quotaForm.invite_reward_amount" :min="0" :decimal-places="4" style="width:100%;"></t-input-number>
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('quota', quotaForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 签到设置 -->
+            <t-tab-panel value="checkin" label="签到设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="checkinForm" label-width="180px">
+                        <t-form-item label="启用签到功能" help="是否开启每日签到奖励功能">
+                            <t-switch v-model="checkinForm.checkin_enabled"></t-switch>
+                        </t-form-item>
+                        <t-form-item label="签到最小额度(元)" help="每次签到奖励的最小金额">
+                            <t-input-number v-model="checkinForm.checkin_min_amount" :min="0" :decimal-places="4" style="width:100%;"></t-input-number>
+                        </t-form-item>
+                        <t-form-item label="签到最大额度(元)" help="每次签到奖励的最大金额，实际奖励在最小和最大之间随机">
+                            <t-input-number v-model="checkinForm.checkin_max_amount" :min="0" :decimal-places="4" style="width:100%;"></t-input-number>
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('checkin', checkinForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 充值链接 -->
+            <t-tab-panel value="recharge" label="充值链接">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="rechargeForm" label-width="120px">
+                        <t-form-item label="充值链接" help="如果填写了链接，前台钱包页面会显示「购买额度」按钮">
+                            <t-input v-model="rechargeForm.recharge_url" placeholder="填写充值链接，前台会显示购买链接按钮"></t-input>
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('recharge', rechargeForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 验证码设置 -->
+            <t-tab-panel value="captcha" label="验证码设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="captchaForm" label-width="140px">
+                        <t-form-item label="验证码长度" help="验证码字符个数，默认4">
+                            <t-input-number v-model="captchaForm.captcha_length" :min="3" :max="8" style="width:100%;"></t-input-number>
+                        </t-form-item>
+                        <t-form-item label="验证码字符集" help="调整验证码难度，默认 abcdefghjkmnpqrstuvwxyz23456789">
+                            <t-input v-model="captchaForm.captcha_chars" placeholder="验证码可用字符"></t-input>
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('captcha', captchaForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 注册设置 -->
+            <t-tab-panel value="register" label="注册设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="registerForm" label-width="180px">
+                        <t-form-item label="开放注册" help="是否允许新用户注册，关闭后仅管理员可创建账号">
+                            <t-switch v-model="registerForm.register_enabled"></t-switch>
+                        </t-form-item>
+                        <t-form-item label="注册必须验证邮箱" help="注册时是否需要邮箱验证，开启前请先配置好 SMTP 设置">
+                            <t-switch v-model="registerForm.register_email_verify"></t-switch>
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('register', registerForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+
+            <!-- 协议设置 -->
+            <t-tab-panel value="terms" label="协议设置">
+                <div style="padding:20px 0;max-width:600px;">
+                    <t-form :data="termsForm" label-width="120px">
+                        <t-form-item label="用户协议" help="用户注册时需同意的服务协议，支持 HTML 格式">
+                            <t-textarea v-model="termsForm.terms_of_service" placeholder="请输入用户协议内容" :autosize="{ minRows: 8, maxRows: 20 }"></t-textarea>
+                        </t-form-item>
+                        <t-form-item label="隐私政策" help="隐私政策内容，支持 HTML 格式">
+                            <t-textarea v-model="termsForm.privacy_policy" placeholder="请输入隐私政策内容" :autosize="{ minRows: 8, maxRows: 20 }"></t-textarea>
+                        </t-form-item>
+                        <t-form-item>
+                            <t-button theme="primary" :loading="saving" @click="saveOptions('terms', termsForm)">保存设置</t-button>
+                        </t-form-item>
+                    </t-form>
+                </div>
+            </t-tab-panel>
+        </t-tabs>
+    </div>
+
+    <!-- 添加/编辑屏蔽词对话框 -->
+    <t-dialog v-model:visible="wordDialogVisible" :header="wordDialogTitle" width="480px" :confirm-on-enter="false"
+        @confirm="handleSubmitWord" :confirm-btn="{ loading: saving }">
+        <t-form :data="wordForm" label-width="80px">
+            <t-form-item label="屏蔽词">
+                <t-input v-model="wordForm.word" placeholder="请输入屏蔽词" />
+            </t-form-item>
+            <t-form-item label="类型">
+                <t-select v-model="wordForm.type">
+                    <t-option :value="1" label="输入检测" />
+                    <t-option :value="2" label="输出检测" />
+                    <t-option :value="3" label="双向检测" />
+                </t-select>
+            </t-form-item>
+            <t-form-item label="动作">
+                <t-select v-model="wordForm.action">
+                    <t-option :value="1" label="替换" />
+                    <t-option :value="2" label="拒绝" />
+                    <t-option :value="3" label="仅记录" />
+                </t-select>
+            </t-form-item>
+            <t-form-item label="替换词" v-if="wordForm.action === 1">
+                <t-input v-model="wordForm.replacement" placeholder="替换为该内容" />
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+
+    <!-- 批量导入屏蔽词对话框 -->
+    <t-dialog v-model:visible="batchImportVisible" header="批量导入屏蔽词" width="520px" :confirm-on-enter="false"
+        @confirm="handleBatchImport" :confirm-btn="{ loading: saving }">
+        <t-form :data="batchForm" label-width="80px">
+            <t-form-item label="屏蔽词">
+                <t-textarea v-model="batchForm.words" placeholder="每行一个屏蔽词" :autosize="{ minRows: 6, maxRows: 12 }" />
+            </t-form-item>
+            <t-form-item label="类型">
+                <t-select v-model="batchForm.type">
+                    <t-option :value="1" label="输入检测" />
+                    <t-option :value="2" label="输出检测" />
+                    <t-option :value="3" label="双向检测" />
+                </t-select>
+            </t-form-item>
+            <t-form-item label="动作">
+                <t-select v-model="batchForm.action">
+                    <t-option :value="1" label="替换" />
+                    <t-option :value="2" label="拒绝" />
+                    <t-option :value="3" label="仅记录" />
+                </t-select>
+            </t-form-item>
+            <t-form-item label="替换词" v-if="batchForm.action === 1">
+                <t-input v-model="batchForm.replacement" placeholder="替换为该内容" />
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const activeTab = ref('site');
+            const saving = ref(false);
+            const wordLoading = ref(false);
+            const wordDialogVisible = ref(false);
+            const wordDialogTitle = ref('添加屏蔽词');
+            const batchImportVisible = ref(false);
+            const editingWordId = ref(null);
+            const wordTableData = ref([]);
+
+            const wordPagination = reactive({ current: 1, total: 0, pageSize: 15 });
+
+            // 各分组表单
+            const siteForm = reactive({ site_name: '', site_logo: '', site_footer: '' });
+            const logForm = reactive({ log_detail_enabled: false });
+            const blockedWordsConfig = reactive({ blocked_word_upstream_enabled: false, blocked_word_input_enabled: false });
+            const paymentForm = reactive({ pay_address: '', pay_id: '', pay_key: '', pay_channels: [] }); // pay_channels: [{name, label}] 对象数组
+            const smtpForm = reactive({ smtp_server: '', smtp_port: 465, smtp_account: '', smtp_token: '', smtp_from: '', smtp_encryption: 'ssl' });
+            const rateLimitForm = reactive({ rate_limit_global: 0, rate_limit_per_user: 0 });
+            const performanceForm = reactive({ cache_ttl: 60, worker_num: 4, auto_disable_channel_enabled: false, channel_disable_threshold: 5 });
+            const quotaForm = reactive({ new_user_initial_balance: 0, pre_deduct_amount: 0, invite_reward_amount: 0 });
+            const checkinForm = reactive({ checkin_enabled: false, checkin_min_amount: 0, checkin_max_amount: 0 });
+            const rechargeForm = reactive({ recharge_url: '' });
+            const captchaForm = reactive({ captcha_length: 4, captcha_chars: 'abcdefghjkmnpqrstuvwxyz23456789' });
+            const registerForm = reactive({ register_enabled: false, register_email_verify: false });
+            const termsForm = reactive({ terms_of_service: '', privacy_policy: '' });
+
+            // 屏蔽词表单
+            const defaultWordForm = { word: '', type: 3, action: 1, replacement: '***' };
+            const wordForm = reactive({ ...defaultWordForm });
+            const batchForm = reactive({ words: '', type: 3, action: 1, replacement: '***' });
+
+            const wordColumns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'word', title: '屏蔽词', width: 200 },
+                { colKey: 'type', title: '类型', width: 90, cell: 'type' },
+                { colKey: 'action', title: '动作', width: 90, cell: 'action' },
+                { colKey: 'replacement', title: '替换词', width: 120 },
+                { colKey: 'status', title: '状态', width: 80, cell: 'status' },
+                { colKey: 'operation', title: '操作', width: 140, cell: 'operation', fixed: 'right' }
+            ];
+
+            var groupFormMap = {
+                site: siteForm,
+                log: logForm,
+                blocked_words: blockedWordsConfig,
+                payment: paymentForm,
+                smtp: smtpForm,
+                rate_limit: rateLimitForm,
+                performance: performanceForm,
+                quota: quotaForm,
+                checkin: checkinForm,
+                recharge: rechargeForm,
+                captcha: captchaForm,
+                register: registerForm,
+                terms: termsForm
+            };
+
+            function toBool(val) {
+                return val === true || val === 'true' || val === '1' || val === 1;
+            }
+
+            function loadOptions(group) {
+                axios.get('/api/admin/options', { params: { group: group } }).then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        var form = groupFormMap[group];
+                        if (form && data) {
+                            Object.keys(form).forEach(function(key) {
+                                if (data[key] !== undefined && data[key] !== null) {
+                                    if (typeof form[key] === 'boolean') {
+                                        // 布尔类型：将字符串转换为真正的布尔值
+                                        form[key] = toBool(data[key]);
+                                    } else if (Array.isArray(form[key])) {
+                                        // 数组类型：从 JSON 字符串解析
+                                        try {
+                                            var parsed = typeof data[key] === 'string' ? JSON.parse(data[key]) : data[key];
+                                            var arr = Array.isArray(parsed) ? parsed : [];
+                                            // pay_channels 需要规范化为 {name, label} 对象格式
+                                            if (key === 'pay_channels') {
+                                                arr = arr.map(function(ch) {
+                                                    if (typeof ch === 'string') {
+                                                        return { name: ch, label: '' };
+                                                    }
+                                                    return { name: ch.name || '', label: ch.label || '' };
+                                                });
+                                            }
+                                            form[key] = arr;
+                                        } catch (e) {
+                                            form[key] = [];
+                                        }
+                                    } else {
+                                        form[key] = data[key];
+                                    }
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+
+            function saveOptions(group, form) {
+                saving.value = true;
+                var options = {};
+                Object.keys(form).forEach(function(key) {
+                    // 数组类型（如 pay_channels）序列化为 JSON 字符串
+                    if (Array.isArray(form[key])) {
+                        options[key] = JSON.stringify(form[key]);
+                    } else {
+                        options[key] = String(form[key]);
+                    }
+                });
+
+                axios.put('/api/admin/options', { options: options }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('保存成功');
+                        // 站点设置修改后刷新页面，使导航栏名称和Logo立即生效
+                        if (group === 'site') {
+                            setTimeout(function() { window.location.reload(); }, 500);
+                        }
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '保存失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { saving.value = false; });
+            }
+
+            function onTabChange(val) {
+                loadOptions(val);
+                if (val === 'blocked_words') {
+                    fetchWords();
+                }
+            }
+
+            // 屏蔽词相关
+            function fetchWords() {
+                wordLoading.value = true;
+                axios.get('/api/admin/blocked-words', { params: { page: wordPagination.current, per_page: wordPagination.pageSize } }).then(function(res) {
+                    if (res.data.code === 0) {
+                        wordTableData.value = res.data.data.list;
+                        wordPagination.total = res.data.data.total;
+                    }
+                }).finally(function() { wordLoading.value = false; });
+            }
+
+            function onWordPageChange(page) {
+                wordPagination.current = page;
+                fetchWords();
+            }
+
+            function openAddWord() {
+                Object.assign(wordForm, defaultWordForm);
+                editingWordId.value = null;
+                wordDialogTitle.value = '添加屏蔽词';
+                wordDialogVisible.value = true;
+            }
+
+            function openEditWord(row) {
+                editingWordId.value = row.id;
+                wordDialogTitle.value = '编辑屏蔽词';
+                wordForm.word = row.word;
+                wordForm.type = row.type;
+                wordForm.action = row.action;
+                wordForm.replacement = row.replacement || '***';
+                wordDialogVisible.value = true;
+            }
+
+            function handleSubmitWord() {
+                saving.value = true;
+                var data = { ...wordForm };
+                var promise;
+                if (editingWordId.value) {
+                    promise = axios.put('/api/admin/blocked-words/' + editingWordId.value, data);
+                } else {
+                    promise = axios.post('/api/admin/blocked-words', data);
+                }
+                promise.then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(editingWordId.value ? '更新成功' : '添加成功');
+                        wordDialogVisible.value = false;
+                        fetchWords();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { saving.value = false; });
+            }
+
+            function handleDeleteWord(row) {
+                axios.delete('/api/admin/blocked-words/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchWords();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            function openBatchImport() {
+                batchForm.words = '';
+                batchForm.type = 3;
+                batchForm.action = 1;
+                batchForm.replacement = '***';
+                batchImportVisible.value = true;
+            }
+
+            function handleBatchImport() {
+                var lines = batchForm.words.split('\n').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
+                if (lines.length === 0) {
+                    TDesign.MessagePlugin.warning('请输入屏蔽词');
+                    return;
+                }
+                saving.value = true;
+                axios.post('/api/admin/blocked-words', {
+                    word: lines[0],
+                    type: batchForm.type,
+                    action: batchForm.action,
+                    replacement: batchForm.replacement
+                }).then(function() {
+                    // 逐个添加剩余词
+                    var promises = lines.slice(1).map(function(word) {
+                        return axios.post('/api/admin/blocked-words', {
+                            word: word,
+                            type: batchForm.type,
+                            action: batchForm.action,
+                            replacement: batchForm.replacement
+                        });
+                    });
+                    return Promise.all(promises);
+                }).then(function() {
+                    TDesign.MessagePlugin.success('批量导入完成，共 ' + lines.length + ' 个词');
+                    batchImportVisible.value = false;
+                    fetchWords();
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '导入失败');
+                }).finally(function() { saving.value = false; });
+            }
+
+            function addPayChannel() {
+                paymentForm.pay_channels.push({ name: '', label: '' });
+            }
+
+            function removePayChannel(idx) {
+                paymentForm.pay_channels.splice(idx, 1);
+            }
+
+            onMounted(function() {
+                loadOptions('site');
+            });
+
+            return {
+                activeTab, saving, wordLoading,
+                siteForm, logForm, blockedWordsConfig, paymentForm, smtpForm, rateLimitForm, performanceForm,
+                quotaForm, checkinForm, rechargeForm, captchaForm, registerForm, termsForm,
+                wordTableData, wordColumns, wordPagination,
+                wordDialogVisible, wordDialogTitle, wordForm,
+                batchImportVisible, batchForm, editingWordId,
+                saveOptions, onTabChange, loadOptions,
+                fetchWords, onWordPageChange,
+                openAddWord, openEditWord, handleSubmitWord, handleDeleteWord,
+                openBatchImport, handleBatchImport,
+                addPayChannel, removePayChannel
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

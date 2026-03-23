@@ -1,0 +1,301 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <t-input v-model="searchKeyword" placeholder="搜索渠道名称" style="width: 240px;" @enter="fetchList" clearable></t-input>
+        <t-select v-model="searchStatus" placeholder="状态" style="width: 120px;" clearable @change="fetchList">
+            <t-option :value="1" label="启用"></t-option>
+            <t-option :value="2" label="禁用"></t-option>
+        </t-select>
+        <t-select v-model="searchType" placeholder="类型" style="width: 140px;" clearable @change="fetchList">
+            <t-option :value="1" label="OpenAI"></t-option>
+            <t-option :value="2" label="Anthropic"></t-option>
+            <t-option :value="3" label="Google Gemini"></t-option>
+            <t-option :value="4" label="DeepSeek"></t-option>
+            <t-option :value="5" label="Ollama"></t-option>
+            <t-option :value="6" label="OpenRouter"></t-option>
+            <t-option :value="99" label="自定义"></t-option>
+        </t-select>
+        <t-button theme="primary" @click="fetchList">搜索</t-button>
+        <div class="spacer"></div>
+        <t-button theme="primary" @click="openCreate">新建渠道</t-button>
+    </div>
+
+    <!-- 表格 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #type="{ row }">
+                <t-tag v-if="row.type === 1" theme="primary" variant="light">OpenAI</t-tag>
+                <t-tag v-else-if="row.type === 2" theme="warning" variant="light">Anthropic</t-tag>
+                <t-tag v-else-if="row.type === 3" theme="success" variant="light">Gemini</t-tag>
+                <t-tag v-else-if="row.type === 4" theme="primary" variant="light">DeepSeek</t-tag>
+                <t-tag v-else-if="row.type === 5" variant="light">Ollama</t-tag>
+                <t-tag v-else-if="row.type === 6" theme="warning" variant="light">OpenRouter</t-tag>
+                <t-tag v-else-if="row.type === 99" variant="light">自定义</t-tag>
+                <t-tag v-else variant="light">未知</t-tag>
+            </template>
+            <template #status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">启用</t-tag>
+                <t-tag v-else theme="danger" variant="light">禁用</t-tag>
+            </template>
+            <template #rate_limit_display="{ row }">
+                <span v-if="!row.rate_limit || row.rate_limit === 0" style="color:#999;">不限制</span>
+                <t-link v-else theme="primary" @click="handleRateLimitStatus(row)">{{ row.rate_limit }}次/{{ row.rate_limit_window || 60 }}秒</t-link>
+            </template>
+            <template #response_time="{ row }">
+                <span v-if="row.response_time">{{ row.response_time }}ms</span>
+                <span v-else style="color:#999;">未测试</span>
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openEdit(row)">编辑</t-link>
+                    <t-link theme="primary" @click="handleTest(row)">测试</t-link>
+                    <t-link :theme="row.status === 1 ? 'danger' : 'success'" @click="handleToggleStatus(row)">
+                        {{ row.status === 1 ? '禁用' : '启用' }}
+                    </t-link>
+                    <t-popconfirm content="确定删除该渠道？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper></t-pagination>
+        </div>
+    </div>
+
+    <!-- 新建/编辑对话框 -->
+    <t-dialog v-model:visible="dialogVisible" :header="dialogTitle" width="680px" :confirm-on-enter="false"
+        @confirm="handleSubmit" :confirm-btn="{ loading: submitting }">
+        <t-form :data="formData" ref="formRef" label-width="100px">
+            <t-form-item label="渠道名称" name="name">
+                <t-input v-model="formData.name" placeholder="请输入渠道名称"></t-input>
+            </t-form-item>
+            <t-form-item label="渠道类型" name="type">
+                <t-select v-model="formData.type">
+                    <t-option :value="1" label="OpenAI"></t-option>
+                    <t-option :value="2" label="Anthropic"></t-option>
+                    <t-option :value="3" label="Google Gemini"></t-option>
+                    <t-option :value="4" label="DeepSeek"></t-option>
+                    <t-option :value="5" label="Ollama"></t-option>
+                    <t-option :value="6" label="OpenRouter"></t-option>
+                    <t-option :value="99" label="自定义"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="Base URL" name="base_url">
+                <t-input v-model="formData.base_url" placeholder="留空使用默认地址"></t-input>
+            </t-form-item>
+            <t-form-item label="API密钥" name="key">
+                <t-textarea v-model="formData.key" placeholder="一行一个密钥" :autosize="{ minRows: 2, maxRows: 5 }"></t-textarea>
+            </t-form-item>
+            <t-form-item label="模型映射" name="model_mapping">
+                <t-textarea v-model="formData.model_mapping" placeholder='JSON格式，如 {"gpt-4":"gpt-4-turbo"}' :autosize="{ minRows: 2, maxRows: 4 }"></t-textarea>
+            </t-form-item>
+            <t-form-item label="测试模型" name="test_model">
+                <t-input v-model="formData.test_model" placeholder="用于测试连通性的模型名"></t-input>
+            </t-form-item>
+            <t-form-item label="权重" name="weight">
+                <t-input-number v-model="formData.weight" :min="1" :max="100"></t-input-number>
+            </t-form-item>
+            <t-form-item label="优先级" name="priority">
+                <t-input-number v-model="formData.priority" :min="0" :max="100"></t-input-number>
+            </t-form-item>
+            <t-form-item label="状态" name="status">
+                <t-select v-model="formData.status">
+                    <t-option :value="1" label="启用"></t-option>
+                    <t-option :value="2" label="禁用"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="自动禁用" name="auto_ban">
+                <t-switch v-model="formData.auto_ban" :custom-value="[1, 0]"></t-switch>
+            </t-form-item>
+            <t-form-item label="透传请求体" name="pass_through">
+                <t-switch v-model="formData.pass_through" :custom-value="[1, 0]"></t-switch>
+            </t-form-item>
+            <t-form-item label="备注" name="remark">
+                <t-input v-model="formData.remark" placeholder="备注信息"></t-input>
+            </t-form-item>
+            <t-divider>限流设置</t-divider>
+            <t-form-item label="最大请求数" name="rate_limit">
+                <t-input-number v-model="formData.rate_limit" :min="0" theme="normal" placeholder="0表示不限制"></t-input-number>
+                <span style="margin-left:8px;color:#999;font-size:12px;">0表示不限制</span>
+            </t-form-item>
+            <t-form-item label="限流窗口" name="rate_limit_window">
+                <t-input-number v-model="formData.rate_limit_window" :min="1" theme="normal"></t-input-number>
+                <span style="margin-left:8px;color:#999;font-size:12px;">秒</span>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const submitting = ref(false);
+            const tableData = ref([]);
+            const searchKeyword = ref('');
+            const searchStatus = ref(null);
+            const searchType = ref(null);
+            const dialogVisible = ref(false);
+            const dialogTitle = ref('新建渠道');
+            const editingId = ref(null);
+            const formRef = ref(null);
+
+            const pagination = reactive({ current: 1, total: 0, pageSize: 15 });
+
+            const defaultForm = {
+                name: '', type: 1, key: '', base_url: '',
+                model_mapping: '', test_model: '', weight: 1, priority: 0,
+                status: 1, auto_ban: 1, remark: '', pass_through: 0, max_input_tokens: 0,
+                rate_limit: 0, rate_limit_window: 60
+            };
+            const formData = reactive({ ...defaultForm });
+
+            const columns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'name', title: '名称', width: 160 },
+                { colKey: 'type', title: '类型', width: 100, cell: 'type' },
+                { colKey: 'status', title: '状态', width: 80, cell: 'status' },
+                { colKey: 'weight', title: '权重', width: 70 },
+                { colKey: 'priority', title: '优先级', width: 80 },
+                { colKey: 'rate_limit_display', title: '限流', width: 110, cell: 'rate_limit_display' },
+                { colKey: 'response_time', title: '响应时间', width: 100, cell: 'response_time' },
+                { colKey: 'operation', title: '操作', width: 220, cell: 'operation', fixed: 'right' }
+            ];
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (searchKeyword.value) params.keyword = searchKeyword.value;
+                if (searchStatus.value !== null && searchStatus.value !== undefined) params.status = searchStatus.value;
+                if (searchType.value !== null && searchType.value !== undefined) params.type = searchType.value;
+
+                axios.get('/api/admin/channels', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                        pagination.total = res.data.data.total;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            function openCreate() {
+                Object.assign(formData, defaultForm);
+                editingId.value = null;
+                dialogTitle.value = '新建渠道';
+                dialogVisible.value = true;
+            }
+
+            function openEdit(row) {
+                editingId.value = row.id;
+                dialogTitle.value = '编辑渠道';
+                Object.keys(defaultForm).forEach(function(k) {
+                    formData[k] = row[k] !== undefined && row[k] !== null ? row[k] : defaultForm[k];
+                });
+                dialogVisible.value = true;
+            }
+
+            function handleSubmit() {
+                submitting.value = true;
+                var data = { ...formData };
+                var promise;
+                if (editingId.value) {
+                    promise = axios.put('/api/admin/channels/' + editingId.value, data);
+                } else {
+                    promise = axios.post('/api/admin/channels', data);
+                }
+                promise.then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(editingId.value ? '更新成功' : '创建成功');
+                        dialogVisible.value = false;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            function handleDelete(row) {
+                axios.delete('/api/admin/channels/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            function handleToggleStatus(row) {
+                var newStatus = row.status === 1 ? 2 : 1;
+                axios.put('/api/admin/channels/' + row.id + '/status', { status: newStatus }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('状态已更新');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                });
+            }
+
+            function handleTest(row) {
+                TDesign.MessagePlugin.info('正在测试...');
+                axios.post('/api/admin/channels/' + row.id + '/test').then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('测试成功，响应时间: ' + res.data.data.response_time + 'ms');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '测试失败');
+                    }
+                }).catch(function() {
+                    TDesign.MessagePlugin.error('测试请求失败');
+                });
+            }
+
+            function handleRateLimitStatus(row) {
+                if (!row.rate_limit || row.rate_limit === 0) {
+                    TDesign.MessagePlugin.info('该渠道未设置限流');
+                    return;
+                }
+                axios.get('/api/admin/channels/rate-limit-status', { params: { channel_id: row.id } }).then(function(res) {
+                    if (res.data.code === 0) {
+                        var d = res.data.data;
+                        var current = d.current_requests || 0;
+                        var limit = d.max_requests || row.rate_limit;
+                        var blocked = d.is_blocked ? '是' : '否';
+                        TDesign.MessagePlugin.info('当前请求数: ' + current + ' / ' + limit + '，已触发限流: ' + blocked);
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '查询失败');
+                    }
+                }).catch(function() {
+                    TDesign.MessagePlugin.error('查询限流状态失败');
+                });
+            }
+
+            onMounted(function() { fetchList(); });
+
+            return {
+                loading, submitting, tableData, columns, searchKeyword, searchStatus, searchType,
+                pagination, dialogVisible, dialogTitle, formData, formRef,
+                fetchList, onPageChange, openCreate, openEdit, handleSubmit,
+                handleDelete, handleToggleStatus, handleTest, handleRateLimitStatus
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

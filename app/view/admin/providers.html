@@ -1,0 +1,184 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <t-input v-model="searchKeyword" placeholder="搜索厂商名称" style="width: 240px;" @enter="fetchList" clearable></t-input>
+        <t-button theme="primary" @click="fetchList">搜索</t-button>
+        <div class="spacer"></div>
+        <t-button theme="primary" @click="openCreate">新建厂商</t-button>
+    </div>
+
+    <!-- 表格 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #color="{ row }">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span :style="{ display: 'inline-block', width: '16px', height: '16px', borderRadius: '3px', backgroundColor: row.color || '#ccc' }"></span>
+                    <span>{{ row.color }}</span>
+                </div>
+            </template>
+            <template #status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">启用</t-tag>
+                <t-tag v-else theme="danger" variant="light">禁用</t-tag>
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openEdit(row)">编辑</t-link>
+                    <t-popconfirm content="确定删除该厂商？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper></t-pagination>
+        </div>
+    </div>
+
+    <!-- 新建/编辑对话框 -->
+    <t-dialog v-model:visible="dialogVisible" :header="dialogTitle" width="520px" :confirm-on-enter="false"
+        @confirm="handleSubmit" :confirm-btn="{ loading: submitting }">
+        <t-form :data="formData" label-width="100px">
+            <t-form-item label="厂商标识" name="name">
+                <t-input v-model="formData.name" placeholder="如 openai、anthropic"></t-input>
+            </t-form-item>
+            <t-form-item label="显示名称" name="display_name">
+                <t-input v-model="formData.display_name" placeholder="如 OpenAI、Anthropic"></t-input>
+            </t-form-item>
+            <t-form-item label="图标" name="icon">
+                <t-input v-model="formData.icon" placeholder="URL 或 SVG（可选）"></t-input>
+            </t-form-item>
+            <t-form-item label="品牌色" name="color">
+                <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
+                    <t-input v-model="formData.color" placeholder="#0052d9" style="flex: 1;"></t-input>
+                    <span :style="{ display: 'inline-block', width: '32px', height: '32px', borderRadius: '4px', border: '1px solid #ddd', backgroundColor: formData.color || '#0052d9' }"></span>
+                </div>
+            </t-form-item>
+            <t-form-item label="排序" name="sort">
+                <t-input-number v-model="formData.sort" :min="0" style="width: 100%;"></t-input-number>
+            </t-form-item>
+            <t-form-item label="状态" name="status">
+                <t-switch v-model="formData.status" :custom-value="[1, 0]"></t-switch>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const submitting = ref(false);
+            const tableData = ref([]);
+            const searchKeyword = ref('');
+            const dialogVisible = ref(false);
+            const dialogTitle = ref('新建厂商');
+            const editingId = ref(null);
+
+            const pagination = reactive({ current: 1, total: 0, pageSize: 15 });
+
+            var defaultForm = {
+                name: '', display_name: '', icon: '', color: '#0052d9', sort: 0, status: 1
+            };
+            const formData = reactive({ ...defaultForm });
+
+            const columns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'name', title: '厂商标识', width: 150 },
+                { colKey: 'display_name', title: '显示名称', width: 150 },
+                { colKey: 'color', title: '品牌色', width: 140, cell: 'color' },
+                { colKey: 'sort', title: '排序', width: 80 },
+                { colKey: 'status', title: '状态', width: 80, cell: 'status' },
+                { colKey: 'operation', title: '操作', width: 140, cell: 'operation', fixed: 'right' }
+            ];
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (searchKeyword.value) params.keyword = searchKeyword.value;
+
+                axios.get('/api/admin/providers', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                        pagination.total = res.data.data.total;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            function openCreate() {
+                Object.assign(formData, defaultForm);
+                editingId.value = null;
+                dialogTitle.value = '新建厂商';
+                dialogVisible.value = true;
+            }
+
+            function openEdit(row) {
+                editingId.value = row.id;
+                dialogTitle.value = '编辑厂商';
+                Object.keys(defaultForm).forEach(function(k) {
+                    formData[k] = row[k] !== undefined && row[k] !== null ? row[k] : defaultForm[k];
+                });
+                dialogVisible.value = true;
+            }
+
+            function handleSubmit() {
+                if (!formData.name || !formData.display_name) {
+                    TDesign.MessagePlugin.warning('请填写厂商标识和显示名称');
+                    return;
+                }
+                submitting.value = true;
+                var data = { ...formData };
+                var promise;
+                if (editingId.value) {
+                    promise = axios.put('/api/admin/providers/' + editingId.value, data);
+                } else {
+                    promise = axios.post('/api/admin/providers', data);
+                }
+                promise.then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(editingId.value ? '更新成功' : '创建成功');
+                        dialogVisible.value = false;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            function handleDelete(row) {
+                axios.delete('/api/admin/providers/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            onMounted(function() { fetchList(); });
+
+            return {
+                loading, submitting, tableData, columns, searchKeyword,
+                pagination, dialogVisible, dialogTitle, formData,
+                fetchList, onPageChange, openCreate, openEdit, handleSubmit, handleDelete
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

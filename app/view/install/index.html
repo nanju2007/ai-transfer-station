@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系统安装向导</title>
+    <link rel="stylesheet" href="/assets/css/tdesign.min.css">
+    <style>
+        body { background: #f5f5f5; padding: 20px; }
+        .install-container { max-width: 900px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .step-content { margin-top: 30px; min-height: 400px; }
+        .check-item { padding: 12px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        .check-item:last-child { border-bottom: none; }
+        .btn-group { margin-top: 30px; text-align: right; }
+        .progress-item { padding: 15px; margin: 10px 0; background: #f5f5f5; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div id="app" class="install-container">
+        <h1 style="text-align: center; margin-bottom: 30px;">系统安装向导</h1>
+        
+        <t-steps :current="currentStep">
+            <t-step-item title="环境检测"></t-step-item>
+            <t-step-item title="数据库配置"></t-step-item>
+            <t-step-item title="Redis配置"></t-step-item>
+            <t-step-item title="站点信息"></t-step-item>
+            <t-step-item title="安装完成"></t-step-item>
+        </t-steps>
+
+        <div class="step-content">
+            <!-- 步骤1: 环境检测 -->
+            <div v-show="currentStep === 0">
+                <h3>环境检测</h3>
+                <div v-if="envChecks.length === 0" style="text-align: center; padding: 50px;">
+                    <t-loading size="large" text="正在检测环境..." />
+                </div>
+                <div v-else>
+                    <div v-for="(check, key) in envChecks" :key="key" class="check-item">
+                        <span>{{ check.name }}</span>
+                        <div>
+                            <t-tag v-if="check.status === 'success'" theme="success">{{ check.message }}</t-tag>
+                            <t-tag v-else theme="danger">{{ check.message }}</t-tag>
+                        </div>
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <t-button theme="primary" @click="nextStep" :disabled="!canProceed">下一步</t-button>
+                </div>
+            </div>
+
+            <!-- 步骤2: 数据库配置 -->
+            <div v-show="currentStep === 1">
+                <h3>数据库配置</h3>
+                <t-form :data="dbConfig" label-width="120px">
+                    <t-form-item label="数据库主机">
+                        <t-input v-model="dbConfig.host" placeholder="127.0.0.1" />
+                    </t-form-item>
+                    <t-form-item label="端口">
+                        <t-input-number v-model="dbConfig.port" :min="1" :max="65535" />
+                    </t-form-item>
+                    <t-form-item label="数据库名">
+                        <t-input v-model="dbConfig.database" placeholder="请输入数据库名" />
+                    </t-form-item>
+                    <t-form-item label="用户名">
+                        <t-input v-model="dbConfig.username" placeholder="请输入用户名" />
+                    </t-form-item>
+                    <t-form-item label="密码">
+                        <t-input v-model="dbConfig.password" type="password" placeholder="请输入密码" autocomplete="new-password" />
+                    </t-form-item>
+                    <t-form-item label="表前缀">
+                        <t-input v-model="dbConfig.prefix" placeholder="可选，默认为空" />
+                    </t-form-item>
+                    <t-form-item>
+                        <t-button @click="testDbConnection" :loading="testing">测试连接</t-button>
+                    </t-form-item>
+                </t-form>
+                <div class="btn-group">
+                    <t-button @click="prevStep">上一步</t-button>
+                    <t-button theme="primary" @click="nextStep" :disabled="!dbTested" style="margin-left: 10px;">下一步</t-button>
+                </div>
+            </div>
+
+            <!-- 步骤3: Redis配置 -->
+            <div v-show="currentStep === 2">
+                <h3>Redis 配置</h3>
+                <t-form :data="redisConfig" label-width="120px">
+                    <t-form-item label="Redis主机">
+                        <t-input v-model="redisConfig.host" placeholder="127.0.0.1" />
+                    </t-form-item>
+                    <t-form-item label="端口">
+                        <t-input-number v-model="redisConfig.port" :min="1" :max="65535" />
+                    </t-form-item>
+                    <t-form-item label="密码">
+                        <t-input v-model="redisConfig.password" type="password" placeholder="可选" autocomplete="off" />
+                    </t-form-item>
+                    <t-form-item label="数据库索引">
+                        <t-input-number v-model="redisConfig.database" :min="0" :max="15" />
+                    </t-form-item>
+                    <t-form-item>
+                        <t-button @click="testRedisConnection" :loading="testing">测试连接</t-button>
+                    </t-form-item>
+                </t-form>
+                <div class="btn-group">
+                    <t-button @click="prevStep">上一步</t-button>
+                    <t-button theme="primary" @click="nextStep" :disabled="!redisTested" style="margin-left: 10px;">下一步</t-button>
+                </div>
+            </div>
+
+            <!-- 步骤4: 站点信息 -->
+            <div v-show="currentStep === 3">
+                <h3>站点信息</h3>
+                <t-form :data="siteConfig" label-width="120px">
+                    <t-form-item label="站点名称">
+                        <t-input v-model="siteConfig.name" placeholder="请输入站点名称" />
+                    </t-form-item>
+                    <t-form-item label="站点URL">
+                        <t-input v-model="siteConfig.url" placeholder="自动检测" />
+                    </t-form-item>
+                    <t-form-item label="管理员用户名">
+                        <t-input v-model="siteConfig.username" placeholder="请输入管理员用户名" />
+                    </t-form-item>
+                    <t-form-item label="管理员密码">
+                        <t-input v-model="siteConfig.password" type="password" placeholder="请输入管理员密码" autocomplete="new-password" />
+                    </t-form-item>
+                    <t-form-item label="管理员邮箱">
+                        <t-input v-model="siteConfig.email" placeholder="请输入管理员邮箱" />
+                    </t-form-item>
+                </t-form>
+                <div class="btn-group">
+                    <t-button @click="prevStep">上一步</t-button>
+                    <t-button theme="primary" @click="startInstall" :loading="installing">开始安装</t-button>
+                </div>
+            </div>
+
+            <!-- 步骤5: 安装进度 -->
+            <div v-show="currentStep === 4">
+                <h3>安装进度</h3>
+                <div v-for="(item, index) in installProgress" :key="index" class="progress-item">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>{{ item.text }}</span>
+                        <t-tag v-if="item.status === 'success'" theme="success">完成</t-tag>
+                        <t-tag v-else-if="item.status === 'error'" theme="danger">失败</t-tag>
+                        <t-loading v-else size="small" />
+                    </div>
+                    <div v-if="item.message" style="margin-top: 5px; color: #666; font-size: 12px;">{{ item.message }}</div>
+                </div>
+                <div v-if="installComplete" class="btn-group">
+                    <t-button theme="primary" @click="goToHome">进入系统</t-button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/assets/js/vue.global.prod.js"></script>
+    <script src="/assets/js/tdesign.min.js"></script>
+    <script src="/assets/js/axios.min.js"></script>
+    <script>
+        const { createApp } = Vue;
+        createApp({
+            data() {
+                return {
+                    currentStep: 0,
+                    envChecks: [],
+                    dbConfig: { host: '127.0.0.1', port: 3306, database: '', username: '', password: '', prefix: '' },
+                    redisConfig: { host: '127.0.0.1', port: 6379, password: '', database: 0 },
+                    siteConfig: { name: '', url: location.origin, username: '', password: '', email: '' },
+                    dbTested: false,
+                    redisTested: false,
+                    testing: false,
+                    installing: false,
+                    installProgress: [],
+                    installComplete: false
+                };
+            },
+            computed: {
+                canProceed() {
+                    if (this.envChecks.length === 0) return false;
+                    const checks = Object.values(this.envChecks);
+                    return checks.every(c => c.status === 'success');
+                }
+            },
+            mounted() {
+                this.checkEnv();
+            },
+            methods: {
+                async checkEnv() {
+                    try {
+                        const res = await axios.post('/install/check-env');
+                        if (res.data && res.data.code === 0) {
+                            this.envChecks = res.data.data;
+                        }
+                    } catch (e) {
+                        TDesign.MessagePlugin.error('环境检测失败');
+                    }
+                },
+                async testDbConnection() {
+                    if (!this.dbConfig.database || !this.dbConfig.username) {
+                        TDesign.MessagePlugin.warning('请填写必填项');
+                        return;
+                    }
+                    this.testing = true;
+                    try {
+                        const res = await axios.post('/install/test-db', this.dbConfig);
+                        if (res.data.code === 0) {
+                            TDesign.MessagePlugin.success(res.data.message);
+                            this.dbTested = true;
+                        } else {
+                            TDesign.MessagePlugin.error(res.data.message);
+                        }
+                    } catch (e) {
+                        TDesign.MessagePlugin.error('测试失败');
+                    } finally {
+                        this.testing = false;
+                    }
+                },
+                async testRedisConnection() {
+                    this.testing = true;
+                    try {
+                        const res = await axios.post('/install/test-redis', this.redisConfig);
+                        if (res.data.code === 0) {
+                            TDesign.MessagePlugin.success(res.data.message);
+                            this.redisTested = true;
+                        } else {
+                            TDesign.MessagePlugin.error(res.data.message);
+                        }
+                    } catch (e) {
+                        TDesign.MessagePlugin.error('测试失败');
+                    } finally {
+                        this.testing = false;
+                    }
+                },
+                async startInstall() {
+                    if (!this.siteConfig.name || !this.siteConfig.username || !this.siteConfig.password || !this.siteConfig.email) {
+                        TDesign.MessagePlugin.warning('请填写所有必填项');
+                        return;
+                    }
+                    this.installing = true;
+                    this.currentStep = 4;
+                    this.installProgress = [
+                        { text: '正在连接数据库...', status: 'loading', message: '' },
+                        { text: '正在创建数据表...', status: 'pending', message: '' },
+                        { text: '正在写入配置文件...', status: 'pending', message: '' },
+                        { text: '正在创建管理员账户...', status: 'pending', message: '' },
+                        { text: '正在完成安装...', status: 'pending', message: '' }
+                    ];
+
+                    try {
+                        const data = {
+                            db_host: this.dbConfig.host,
+                            db_port: this.dbConfig.port,
+                            db_name: this.dbConfig.database,
+                            db_user: this.dbConfig.username,
+                            db_pass: this.dbConfig.password,
+                            db_prefix: this.dbConfig.prefix,
+                            redis_host: this.redisConfig.host,
+                            redis_port: this.redisConfig.port,
+                            redis_pass: this.redisConfig.password,
+                            redis_db: this.redisConfig.database,
+                            site_name: this.siteConfig.name,
+                            site_url: this.siteConfig.url,
+                            admin_user: this.siteConfig.username,
+                            admin_pass: this.siteConfig.password,
+                            admin_email: this.siteConfig.email
+                        };
+
+                        // 模拟进度更新
+                        for (let i = 0; i < this.installProgress.length; i++) {
+                            this.installProgress[i].status = 'loading';
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                        }
+
+                        const res = await axios.post('/install/execute', data);
+                        
+                        if (res.data.code === 0) {
+                            const tableCount = res.data.data?.table_count || 20;
+                            this.installProgress.forEach(item => {
+                                item.status = 'success';
+                                item.message = '';
+                            });
+                            this.installProgress[0].text = '数据库连接成功';
+                            this.installProgress[1].text = `数据表创建完成（${tableCount}个表）`;
+                            this.installProgress[2].text = '配置文件写入完成';
+                            this.installProgress[3].text = '管理员账户创建完成';
+                            this.installProgress[4].text = '安装完成';
+                            this.installComplete = true;
+                            TDesign.MessagePlugin.success('安装成功！');
+                        } else {
+                            const errorIndex = res.data.message.includes('表') ? 1 : 0;
+                            this.installProgress[errorIndex].status = 'error';
+                            this.installProgress[errorIndex].message = res.data.message;
+                            for (let i = errorIndex + 1; i < this.installProgress.length; i++) {
+                                this.installProgress[i].status = 'pending';
+                            }
+                            TDesign.MessagePlugin.error(res.data.message);
+                        }
+                    } catch (e) {
+                        this.installProgress[0].status = 'error';
+                        this.installProgress[0].message = e.response?.data?.message || e.message;
+                        TDesign.MessagePlugin.error('安装失败');
+                    } finally {
+                        this.installing = false;
+                    }
+                },
+                nextStep() {
+                    this.currentStep++;
+                },
+                prevStep() {
+                    this.currentStep--;
+                },
+                goToHome() {
+                    location.href = '/';
+                }
+            }
+        }).use(TDesign).mount('#app');
+    </script>
+</body>
+</html>

@@ -1,0 +1,280 @@
+<?php $currentPage = 'redemptions'; $pageTitle = '兑换码管理'; ?>
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <t-select v-model="searchStatus" placeholder="状态筛选" style="width: 140px;" clearable @change="fetchList">
+            <t-option :value="1" label="未使用" />
+            <t-option :value="2" label="已禁用" />
+            <t-option :value="3" label="已使用" />
+        </t-select>
+        <t-button theme="primary" @click="fetchList">搜索</t-button>
+        <div class="spacer"></div>
+        <t-button theme="danger" :disabled="selectedIds.length === 0" @click="handleBatchDelete">批量删除</t-button>
+        <t-button theme="primary" @click="openGenerate">批量生成</t-button>
+    </div>
+
+    <!-- 表格 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small"
+            :selected-row-keys="selectedIds" @select-change="onSelectChange">
+            <template #key="{ row }">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <code style="font-size:12px;">{{ row.key }}</code>
+                    <t-link theme="primary" size="small" @click="copyCode(row.key)">复制</t-link>
+                </div>
+            </template>
+            <template #quota="{ row }">
+                ¥{{ Number(row.quota / 1000).toFixed(4) }}
+            </template>
+            <template #status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">未使用</t-tag>
+                <t-tag v-else-if="row.status === 2" theme="warning" variant="light">已禁用</t-tag>
+                <t-tag v-else-if="row.status === 3" theme="default" variant="light">已使用</t-tag>
+            </template>
+            <template #used_user_id="{ row }">
+                <span v-if="row.used_user_id">{{ row.used_user_id }}</span>
+                <span v-else style="color:#999;">-</span>
+            </template>
+            <template #created_at="{ row }">
+                {{ formatTime(row.created_at) }}
+            </template>
+            <template #expired_at="{ row }">
+                <span v-if="row.expired_at">{{ formatTime(row.expired_at) }}</span>
+                <span v-else style="color:#999;">永不过期</span>
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link v-if="row.status !== 3" :theme="row.status === 1 ? 'danger' : 'success'" @click="handleToggleStatus(row)">
+                        {{ row.status === 1 ? '禁用' : '启用' }}
+                    </t-link>
+                    <t-popconfirm content="确定删除该兑换码？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper />
+        </div>
+    </div>
+
+    <!-- 批量生成对话框 -->
+    <t-dialog v-model:visible="generateVisible" header="批量生成兑换码" width="500px" :confirm-on-enter="false"
+        @confirm="handleGenerate" :confirm-btn="{ loading: submitting }">
+        <t-form :data="generateForm" label-width="100px">
+            <t-form-item label="名称" name="name">
+                <t-input v-model="generateForm.name" placeholder="兑换码名称" />
+            </t-form-item>
+            <t-form-item label="额度(元)" name="quota">
+                <t-input-number v-model="generateForm.quota" :min="0.001" :decimal-places="4" style="width:100%;" placeholder="额度，单位：元" />
+                <div style="color:#999;font-size:12px;margin-top:4px;">兑换码面额，用户兑换后将充值到钱包余额</div>
+            </t-form-item>
+            <t-form-item label="数量" name="count">
+                <t-input-number v-model="generateForm.count" :min="1" :max="100" style="width:100%;" />
+            </t-form-item>
+            <t-form-item label="前缀" name="prefix">
+                <t-input v-model="generateForm.prefix" placeholder="可选，兑换码前缀" />
+            </t-form-item>
+            <t-form-item label="过期时间" name="expires_at">
+                <t-date-picker v-model="generateForm.expires_at" enable-time-picker style="width:100%;" placeholder="留空则永不过期" clearable />
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+
+    <!-- 生成结果对话框 -->
+    <t-dialog v-model:visible="resultVisible" header="生成成功" width="560px" :footer="false">
+        <div style="margin-bottom:12px;color:#666;font-size:13px;">共生成 {{ generatedCodes.length }} 个兑换码：</div>
+        <div style="background:#f5f5f5;border-radius:6px;padding:12px;max-height:320px;overflow-y:auto;">
+            <div v-for="(code, idx) in generatedCodes" :key="idx" style="font-family:monospace;font-size:13px;line-height:2;word-break:break-all;">{{ code }}</div>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:12px;justify-content:flex-end;">
+            <t-button theme="primary" @click="copyAllCodes">一键复制全部</t-button>
+            <t-button theme="default" @click="resultVisible = false">关闭</t-button>
+        </div>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const submitting = ref(false);
+            const tableData = ref([]);
+            const searchStatus = ref(null);
+            const generateVisible = ref(false);
+            const selectedIds = ref([]);
+
+            const pagination = reactive({ current: 1, total: 0, pageSize: 15 });
+
+            const generateForm = reactive({
+                name: '批量生成',
+                quota: 1,
+                count: 10,
+                prefix: '',
+                expires_at: ''
+            });
+
+            const resultVisible = ref(false);
+            const generatedCodes = ref([]);
+
+            const columns = [
+                { colKey: 'row-select', type: 'multiple', width: 50 },
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'name', title: '名称', width: 120 },
+                { colKey: 'key', title: '兑换码', width: 300, cell: 'key' },
+                { colKey: 'quota', title: '额度', width: 100, cell: 'quota' },
+                { colKey: 'status', title: '状态', width: 90, cell: 'status' },
+                { colKey: 'used_user_id', title: '使用者', width: 80, cell: 'used_user_id' },
+                { colKey: 'created_at', title: '创建时间', width: 170, cell: 'created_at' },
+                { colKey: 'expired_at', title: '过期时间', width: 170, cell: 'expired_at' },
+                { colKey: 'operation', title: '操作', width: 140, cell: 'operation', fixed: 'right' }
+            ];
+
+            function formatTime(val) {
+                if (!val) return '-';
+                var d = new Date(val);
+                if (isNaN(d.getTime())) return val;
+                var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+                return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+            }
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (searchStatus.value !== null && searchStatus.value !== undefined) params.status = searchStatus.value;
+
+                axios.get('/api/admin/redemptions', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                        pagination.total = res.data.data.total;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            function onSelectChange(keys) {
+                selectedIds.value = keys;
+            }
+
+            function openGenerate() {
+                generateForm.name = '批量生成';
+                generateForm.quota = 1;
+                generateForm.count = 10;
+                generateForm.prefix = '';
+                generateForm.expires_at = '';
+                generateVisible.value = true;
+            }
+
+            function handleGenerate() {
+                submitting.value = true;
+                var data = {
+                    name: generateForm.name,
+                    quota: Math.round(generateForm.quota * 1000),
+                    count: generateForm.count,
+                    prefix: generateForm.prefix
+                };
+                if (generateForm.expires_at) data.expires_at = generateForm.expires_at;
+
+                axios.post('/api/admin/redemptions', data).then(function(res) {
+                    if (res.data.code === 0) {
+                        generateVisible.value = false;
+                        // 提取生成的兑换码key列表并显示结果对话框
+                        generatedCodes.value = (res.data.data.codes || []).map(function(c) { return c.key; });
+                        resultVisible.value = true;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '生成失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            function handleDelete(row) {
+                axios.delete('/api/admin/redemptions/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            function handleBatchDelete() {
+                if (selectedIds.value.length === 0) return;
+                axios.post('/api/admin/redemptions/batch-destroy', { ids: selectedIds.value }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('批量删除成功');
+                        selectedIds.value = [];
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            function handleToggleStatus(row) {
+                var newStatus = row.status === 1 ? 2 : 1;
+                axios.put('/api/admin/redemptions/' + row.id + '/status', { status: newStatus }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('状态已更新');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                });
+            }
+
+            function copyCode(text) {
+                copyToClipboard(text);
+            }
+
+            function copyAllCodes() {
+                var text = generatedCodes.value.join('\n');
+                copyToClipboard(text);
+            }
+
+            function copyToClipboard(text) {
+                if (navigator.clipboard) {
+                    navigator.clipboard.writeText(text).then(function() {
+                        TDesign.MessagePlugin.success('已复制');
+                    });
+                } else {
+                    var ta = document.createElement('textarea');
+                    ta.value = text;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    TDesign.MessagePlugin.success('已复制');
+                }
+            }
+
+            onMounted(function() { fetchList(); });
+
+            return {
+                loading, submitting, tableData, columns, searchStatus,
+                pagination, generateVisible, generateForm, selectedIds,
+                resultVisible, generatedCodes,
+                fetchList, onPageChange, onSelectChange, openGenerate,
+                handleGenerate, handleDelete, handleBatchDelete,
+                handleToggleStatus, copyCode, copyAllCodes, formatTime
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

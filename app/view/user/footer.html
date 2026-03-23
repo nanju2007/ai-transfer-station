@@ -1,0 +1,25 @@
+        </div><!-- end user-content -->
+    </div><!-- end user-main -->
+</div><!-- end user-layout -->
+</div><!-- end #app -->
+
+<script>
+// 用户退出
+function userLogout() {
+    axios.post('/api/user/auth/logout').then(function() {
+        window.location.href = '/user/login';
+    });
+}
+// 检查登录状态
+axios.get('/api/user/auth/info').then(function(res) {
+    if (res.data.code === 0) {
+        document.getElementById('user-name').textContent = res.data.data.display_name || res.data.data.username;
+    }
+}).catch(function() {
+    if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/user/login';
+    }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,359 @@
+<?php
+use app\model\Option;
+$siteName = Option::getOption('site_name', 'AI中转站');
+?>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?= htmlspecialchars($siteName) ?> - 用户登录</title>
+    <link rel="stylesheet" href="/assets/css/tdesign.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .login-container { width: 400px; }
+        .login-card { background: #fff; border-radius: 8px; padding: 40px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+        .login-card .title { text-align: center; font-size: 24px; font-weight: 600; color: #333; margin-bottom: 8px; }
+        .login-card .subtitle { text-align: center; font-size: 14px; color: #999; margin-bottom: 32px; }
+        .form-item { margin-bottom: 20px; }
+        .form-item label { display: block; font-size: 14px; color: #333; margin-bottom: 8px; }
+        .form-item input { width: 100%; height: 40px; border: 1px solid #dcdcdc; border-radius: 4px; padding: 0 12px; font-size: 14px; outline: none; transition: border-color 0.3s; }
+        .form-item input:focus { border-color: #0052d9; }
+        .login-btn { width: 100%; height: 40px; background: #0052d9; color: #fff; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; transition: background 0.3s; }
+        .login-btn:hover { background: #0034b5; }
+        .login-btn:disabled { background: #bbd3f0; cursor: not-allowed; }
+        .error-msg { color: #e34d59; font-size: 13px; margin-top: 8px; min-height: 20px; text-align: center; }
+        .success-msg { color: #2ba471; font-size: 13px; margin-top: 8px; min-height: 20px; text-align: center; }
+        .extra-links { text-align: center; margin-top: 16px; font-size: 14px; }
+        .extra-links a { color: #0052d9; text-decoration: none; cursor: pointer; }
+        .extra-links a:hover { text-decoration: underline; }
+        .extra-links .separator { margin: 0 8px; color: #dcdcdc; }
+        .code-input-row { display: flex; gap: 10px; }
+        .code-input-row input { flex: 1; }
+        .code-input-row button { flex-shrink: 0; width: 120px; height: 40px; background: #0052d9; color: #fff; border: none; border-radius: 4px; font-size: 13px; cursor: pointer; transition: background 0.3s; }
+        .code-input-row button:hover { background: #0034b5; }
+        .code-input-row button:disabled { background: #bbd3f0; cursor: not-allowed; }
+        .captcha-row { display: flex; gap: 10px; align-items: center; }
+        .captcha-row input { flex: 1; }
+        .captcha-row img { height: 40px; border-radius: 4px; cursor: pointer; border: 1px solid #dcdcdc; }
+        .back-link { text-align: center; margin-top: 16px; font-size: 14px; }
+        .back-link a { color: #0052d9; text-decoration: none; cursor: pointer; }
+        .back-link a:hover { text-decoration: underline; }
+        .reset-success { text-align: center; padding: 20px 0; }
+        .reset-success .icon { font-size: 48px; color: #2ba471; margin-bottom: 16px; }
+        .reset-success .text { font-size: 16px; color: #333; margin-bottom: 8px; }
+        .reset-success .hint { font-size: 13px; color: #999; }
+    </style>
+</head>
+<body>
+    <div class="login-container" id="app">
+        <div class="login-card">
+            <div class="title"><?= htmlspecialchars($siteName) ?></div>
+            <div class="subtitle" v-if="!forgotMode">用户登录</div>
+            <div class="subtitle" v-if="forgotMode">忘记密码</div>
+
+            <!-- 登录表单 -->
+            <div v-if="!forgotMode">
+                <div class="form-item">
+                    <label>用户名 / 邮箱</label>
+                    <input type="text" v-model="loginForm.username" placeholder="请输入用户名或邮箱" autocomplete="username" @keydown.enter="$refs.passwordInput.focus()">
+                </div>
+                <div class="form-item">
+                    <label>密码</label>
+                    <input type="password" ref="passwordInput" v-model="loginForm.password" placeholder="请输入密码" autocomplete="current-password" @keydown.enter="handleLogin">
+                </div>
+                <div class="form-item">
+                    <label>验证码</label>
+                    <div class="captcha-row">
+                        <input type="text" v-model="loginForm.captcha" placeholder="请输入验证码" maxlength="10" @keydown.enter="handleLogin">
+                        <img :src="captchaUrl" @click="refreshCaptcha" title="点击刷新验证码" alt="验证码">
+                    </div>
+                </div>
+                <div class="error-msg">{{ loginError }}</div>
+                <button class="login-btn" :disabled="loginLoading" @click="handleLogin">{{ loginLoading ? '登录中...' : '登录' }}</button>
+                <div class="extra-links">
+                    <a href="/user/register">去注册</a>
+                    <span class="separator">|</span>
+                    <a @click="showForgot">忘记密码？</a>
+                </div>
+            </div>
+
+            <!-- 忘记密码 - 步骤1：输入邮箱 -->
+            <div v-if="forgotMode && forgotStep === 1">
+                <div class="form-item">
+                    <label>注册邮箱</label>
+                    <input type="email" v-model="forgotForm.email" placeholder="请输入注册时使用的邮箱">
+                </div>
+                <div class="form-item">
+                    <label>验证码</label>
+                    <div class="captcha-row">
+                        <input type="text" v-model="forgotForm.captcha" placeholder="请输入验证码" maxlength="10" @keydown.enter="sendCode">
+                        <img :src="forgotCaptchaUrl" @click="refreshForgotCaptcha" title="点击刷新验证码" alt="验证码">
+                    </div>
+                </div>
+                <div class="error-msg">{{ forgotError }}</div>
+                <div class="success-msg">{{ forgotSuccess }}</div>
+                <button class="login-btn" :disabled="countdown > 0 || sendingCode" @click="sendCode">{{ sendCodeBtnText }}</button>
+                <div class="back-link">
+                    <a @click="backToLogin">返回登录</a>
+                </div>
+            </div>
+
+            <!-- 忘记密码 - 步骤2：输入验证码和新密码 -->
+            <div v-if="forgotMode && forgotStep === 2">
+                <div class="form-item">
+                    <label>邮箱</label>
+                    <input type="email" :value="forgotForm.email" disabled>
+                </div>
+                <div class="form-item">
+                    <label>验证码</label>
+                    <div class="code-input-row">
+                        <input type="text" v-model="forgotForm.code" placeholder="请输入验证码" maxlength="6">
+                        <button :disabled="countdown > 0 || sendingCode" @click="sendCode">{{ sendCodeBtnText }}</button>
+                    </div>
+                </div>
+                <div class="form-item">
+                    <label>新密码</label>
+                    <input type="password" v-model="forgotForm.password" placeholder="请输入新密码（至少6位）">
+                </div>
+                <div class="form-item">
+                    <label>确认密码</label>
+                    <input type="password" v-model="forgotForm.confirmPassword" placeholder="请再次输入新密码" @keydown.enter="handleReset">
+                </div>
+                <div class="error-msg">{{ forgotError }}</div>
+                <button class="login-btn" :disabled="resetLoading" @click="handleReset">{{ resetLoading ? '重置中...' : '重置密码' }}</button>
+                <div class="back-link">
+                    <a @click="backToLogin">返回登录</a>
+                </div>
+            </div>
+
+            <!-- 忘记密码 - 步骤3：重置成功 -->
+            <div v-if="forgotMode && forgotStep === 3">
+                <div class="reset-success">
+                    <div class="icon">&#10003;</div>
+                    <div class="text">密码重置成功</div>
+                    <div class="hint">{{ autoRedirectText }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script src="/assets/js/vue.global.prod.js"></script>
+<script src="/assets/js/axios.min.js"></script>
+<script>
+var { createApp, ref, computed, onBeforeUnmount } = Vue;
+
+createApp({
+    setup() {
+        // 登录相关
+        var loginForm = ref({ username: '', password: '', captcha: '' });
+        var loginError = ref('');
+        var loginLoading = ref(false);
+        var captchaUrl = ref('/api/captcha?' + Date.now());
+
+        // 忘记密码相关
+        var forgotMode = ref(false);
+        var forgotStep = ref(1);
+        var forgotForm = ref({ email: '', code: '', password: '', confirmPassword: '', captcha: '' });
+        var forgotCaptchaUrl = ref('/api/captcha?' + Date.now());
+        var forgotError = ref('');
+        var forgotSuccess = ref('');
+        var countdown = ref(0);
+        var sendingCode = ref(false);
+        var resetLoading = ref(false);
+        var redirectCountdown = ref(3);
+        var countdownTimer = null;
+        var redirectTimer = null;
+
+        var sendCodeBtnText = computed(function() {
+            if (sendingCode.value) return '发送中...';
+            if (countdown.value > 0) return countdown.value + '秒后重发';
+            return '发送验证码';
+        });
+
+        var autoRedirectText = computed(function() {
+            return redirectCountdown.value + '秒后自动跳转到登录...';
+        });
+
+        function refreshCaptcha() {
+            captchaUrl.value = '/api/captcha?' + Date.now();
+        }
+
+        function refreshForgotCaptcha() {
+            forgotCaptchaUrl.value = '/api/captcha?' + Date.now();
+        }
+
+        function handleLogin() {
+            var username = loginForm.value.username.trim();
+            var password = loginForm.value.password.trim();
+            var captcha = loginForm.value.captcha.trim();
+
+            if (!username || !password) {
+                loginError.value = '请输入用户名和密码';
+                return;
+            }
+            if (!captcha) {
+                loginError.value = '请输入验证码';
+                return;
+            }
+
+            loginLoading.value = true;
+            loginError.value = '';
+
+            axios.post('/api/user/auth/login', {
+                username: username,
+                password: password,
+                captcha: captcha
+            }).then(function(res) {
+                if (res.data.code === 0) {
+                    window.location.href = '/user/dashboard';
+                } else {
+                    loginError.value = res.data.msg || '登录失败';
+                    loginLoading.value = false;
+                }
+            }).catch(function(err) {
+                loginError.value = err.response?.data?.msg || '网络错误，请重试';
+                loginLoading.value = false;
+                refreshCaptcha();
+            });
+        }
+
+        function showForgot() {
+            forgotMode.value = true;
+            forgotStep.value = 1;
+            forgotForm.value = { email: '', code: '', password: '', confirmPassword: '', captcha: '' };
+            forgotError.value = '';
+            forgotSuccess.value = '';
+            refreshForgotCaptcha();
+        }
+
+        function backToLogin() {
+            forgotMode.value = false;
+            forgotStep.value = 1;
+            forgotError.value = '';
+            forgotSuccess.value = '';
+            clearTimers();
+        }
+
+        function clearTimers() {
+            if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+            if (redirectTimer) { clearInterval(redirectTimer); redirectTimer = null; }
+        }
+
+        function startCountdown() {
+            countdown.value = 60;
+            if (countdownTimer) clearInterval(countdownTimer);
+            countdownTimer = setInterval(function() {
+                countdown.value--;
+                if (countdown.value <= 0) {
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                }
+            }, 1000);
+        }
+
+        function sendCode() {
+            var email = forgotForm.value.email.trim();
+            var captcha = forgotForm.value.captcha.trim();
+            if (!email) {
+                forgotError.value = '请输入邮箱';
+                forgotSuccess.value = '';
+                return;
+            }
+            if (!captcha) {
+                forgotError.value = '请输入验证码';
+                forgotSuccess.value = '';
+                return;
+            }
+
+            sendingCode.value = true;
+            forgotError.value = '';
+            forgotSuccess.value = '';
+
+            axios.post('/api/user/auth/forgot-password', { email: email, captcha: captcha })
+                .then(function(res) {
+                    sendingCode.value = false;
+                    if (res.data.code === 0) {
+                        forgotSuccess.value = res.data.msg || '验证码已发送';
+                        forgotError.value = '';
+                        startCountdown();
+                        if (forgotStep.value === 1) {
+                            forgotStep.value = 2;
+                        }
+                    } else {
+                        forgotError.value = res.data.msg || '发送失败';
+                    }
+                }).catch(function(err) {
+                    sendingCode.value = false;
+                    forgotError.value = err.response?.data?.msg || '网络错误，请重试';
+                    refreshForgotCaptcha();
+                });
+        }
+
+        function handleReset() {
+            var form = forgotForm.value;
+            if (!form.code.trim()) {
+                forgotError.value = '请输入验证码';
+                return;
+            }
+            if (!form.password) {
+                forgotError.value = '请输入新密码';
+                return;
+            }
+            if (form.password.length < 6) {
+                forgotError.value = '密码至少6位';
+                return;
+            }
+            if (form.password !== form.confirmPassword) {
+                forgotError.value = '两次密码输入不一致';
+                return;
+            }
+
+            resetLoading.value = true;
+            forgotError.value = '';
+
+            axios.post('/api/user/auth/reset-password', {
+                email: form.email.trim(),
+                code: form.code.trim(),
+                password: form.password
+            }).then(function(res) {
+                resetLoading.value = false;
+                if (res.data.code === 0) {
+                    forgotStep.value = 3;
+                    redirectCountdown.value = 3;
+                    redirectTimer = setInterval(function() {
+                        redirectCountdown.value--;
+                        if (redirectCountdown.value <= 0) {
+                            clearInterval(redirectTimer);
+                            redirectTimer = null;
+                            backToLogin();
+                        }
+                    }, 1000);
+                } else {
+                    forgotError.value = res.data.msg || '重置失败';
+                }
+            }).catch(function(err) {
+                resetLoading.value = false;
+                forgotError.value = err.response?.data?.msg || '网络错误，请重试';
+            });
+        }
+
+        onBeforeUnmount(function() {
+            clearTimers();
+        });
+
+        return {
+            loginForm, loginError, loginLoading, handleLogin,
+            captchaUrl, refreshCaptcha,
+            forgotCaptchaUrl, refreshForgotCaptcha,
+            forgotMode, forgotStep, forgotForm, forgotError, forgotSuccess,
+            countdown, sendingCode, resetLoading, redirectCountdown,
+            sendCodeBtnText, autoRedirectText,
+            showForgot, backToLogin, sendCode, handleReset
+        };
+    }
+}).mount('#app');
+</script>
+</body>
+</html>

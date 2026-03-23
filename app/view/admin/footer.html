@@ -1,0 +1,25 @@
+        </div><!-- end admin-content -->
+    </div><!-- end admin-main -->
+</div><!-- end admin-layout -->
+</div><!-- end #app -->
+
+<script>
+// 管理员退出
+function adminLogout() {
+    axios.post('/api/admin/auth/logout').then(function() {
+        window.location.href = '/admin/login';
+    });
+}
+// 检查登录状态
+axios.get('/api/admin/auth/info').then(function(res) {
+    if (res.data.code === 0) {
+        document.getElementById('admin-name').textContent = res.data.data.username;
+    }
+}).catch(function() {
+    if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/admin/login';
+    }
+});
+</script>
+</body>
+</html>

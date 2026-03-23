@@ -1,0 +1,282 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 筛选工具栏 -->
+    <div class="toolbar">
+        <t-input v-model="searchModel" placeholder="模型名称" style="width: 200px;" clearable @enter="fetchList" />
+        <t-date-range-picker v-model="dateRange" allow-input clearable style="width: 280px;" @change="fetchList" />
+        <t-button theme="primary" @click="fetchList">搜索</t-button>
+    </div>
+
+    <!-- 统计面板 -->
+    <div class="stat-cards">
+        <div class="stat-card">
+            <div class="label">总请求数</div>
+            <div class="value">{{ statistics.total_requests || 0 }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总Token数</div>
+            <div class="value">{{ statistics.total_tokens || 0 }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">总费用</div>
+            <div class="value">¥{{ Number(statistics.total_cost || 0).toFixed(4) }}</div>
+        </div>
+    </div>
+
+    <!-- 统计图表 -->
+    <div class="content-card" style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <span style="font-size:14px;font-weight:500;">使用趋势</span>
+            <t-radio-group v-model="chartGroupBy" variant="default-filled" size="small" @change="fetchStatistics">
+                <t-radio-button value="hour">按小时</t-radio-button>
+                <t-radio-button value="day">按天</t-radio-button>
+            </t-radio-group>
+        </div>
+        <div id="daily-chart" style="height: 280px;"></div>
+    </div>
+
+    <!-- 日志列表 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #cost="{ row }">
+                <t-link theme="primary" hover="color" @click="showBilling(row)">
+                    ¥{{ row.cost ? Number(row.cost).toFixed(6) : '0.000000' }}
+                </t-link>
+            </template>
+            <template #duration="{ row }">
+                <span v-if="row.duration">{{ row.duration }}ms</span>
+                <span v-else-if="row.use_time">{{ row.use_time }}ms</span>
+                <span v-else style="color:#999;">-</span>
+            </template>
+            <template #ttft="{ row }">
+                <span v-if="row.ttft">{{ row.ttft }}ms</span>
+                <span v-else style="color:#999;">-</span>
+            </template>
+            <template #is_stream="{ row }">
+                <t-tag v-if="row.is_stream" theme="primary" variant="light">流式</t-tag>
+                <t-tag v-else variant="light">非流式</t-tag>
+            </template>
+            <template #created_at="{ row }">
+                {{ formatDate(row.created_at) }}
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper />
+        </div>
+    </div>
+
+    <!-- 计费详情对话框 -->
+    <t-dialog v-model:visible="billingVisible" header="计费详情" width="520px" :footer="false">
+        <div v-if="billingLoading" style="text-align:center;padding:20px;">
+            <t-loading />
+        </div>
+        <div v-else-if="billingData">
+            <t-descriptions :column="2" bordered size="small" style="margin-bottom:16px;">
+                <t-descriptions-item label="模型">{{ billingData.model_name }}</t-descriptions-item>
+                <t-descriptions-item label="总Token">{{ billingData.total_tokens }}</t-descriptions-item>
+                <t-descriptions-item label="输入Token">{{ billingData.prompt_tokens }}</t-descriptions-item>
+                <t-descriptions-item label="输出Token">{{ billingData.completion_tokens }}</t-descriptions-item>
+                <t-descriptions-item v-if="billingData.cached_tokens || billingData.cache_read_tokens" label="缓存读取Token">{{ billingData.cache_read_tokens || billingData.cached_tokens || 0 }}</t-descriptions-item>
+                <t-descriptions-item v-if="billingData.cache_creation_tokens" label="缓存创建Token">{{ billingData.cache_creation_tokens }}</t-descriptions-item>
+                <t-descriptions-item label="总用时">{{ billingData.duration ? billingData.duration + 'ms' : '-' }}</t-descriptions-item>
+                <t-descriptions-item label="首字时间">{{ billingData.ttft ? billingData.ttft + 'ms' : '-' }}</t-descriptions-item>
+                <t-descriptions-item label="请求IP">{{ billingData.ip || '-' }}</t-descriptions-item>
+                <t-descriptions-item label="用户分组">{{ billingData.group_name }} (×{{ billingData.group_ratio }})</t-descriptions-item>
+            </t-descriptions>
+
+            <div v-if="billingData.pricing" style="margin-bottom:12px;">
+                <div style="font-size:13px;font-weight:500;margin-bottom:8px;">定价信息</div>
+                <t-descriptions :column="2" bordered size="small">
+                    <t-descriptions-item label="计费方式">{{ billingData.pricing.billing_type === 'per_token' ? '按量计费' : '按次计费' }}</t-descriptions-item>
+                    <t-descriptions-item v-if="billingData.pricing.billing_type === 'per_token'" label="输入价格">¥{{ billingData.pricing.input_price }}/百万Token</t-descriptions-item>
+                    <t-descriptions-item v-if="billingData.pricing.billing_type === 'per_token'" label="输出价格">¥{{ billingData.pricing.output_price }}/百万Token</t-descriptions-item>
+                    <t-descriptions-item v-if="billingData.pricing.billing_type === 'per_request'" label="单次价格">¥{{ billingData.pricing.fixed_price }}</t-descriptions-item>
+                </t-descriptions>
+            </div>
+
+            <div v-if="billingData.cost_breakdown && Object.keys(billingData.cost_breakdown).length">
+                <div style="font-size:13px;font-weight:500;margin-bottom:8px;">费用明细</div>
+                <t-descriptions :column="2" bordered size="small">
+                    <template v-if="billingData.cost_breakdown.input_cost !== undefined">
+                        <t-descriptions-item label="输入费用">¥{{ billingData.cost_breakdown.input_cost }}</t-descriptions-item>
+                        <t-descriptions-item label="输出费用">¥{{ billingData.cost_breakdown.output_cost }}</t-descriptions-item>
+                        <t-descriptions-item label="小计">¥{{ billingData.cost_breakdown.subtotal }}</t-descriptions-item>
+                        <t-descriptions-item label="倍率">×{{ billingData.cost_breakdown.ratio }}</t-descriptions-item>
+                    </template>
+                    <template v-else>
+                        <t-descriptions-item label="单次价格">¥{{ billingData.cost_breakdown.fixed_price }}</t-descriptions-item>
+                        <t-descriptions-item label="倍率">×{{ billingData.cost_breakdown.ratio }}</t-descriptions-item>
+                    </template>
+                    <t-descriptions-item label="最终费用" :span="2">
+                        <span style="color:#e34d59;font-weight:600;">¥{{ billingData.cost_breakdown.final_cost }}</span>
+                    </t-descriptions-item>
+                </t-descriptions>
+            </div>
+
+            <div style="margin-top:12px;text-align:right;">
+                <span style="font-size:13px;color:#666;">实际扣费：</span>
+                <span style="font-size:16px;font-weight:600;color:#e34d59;">¥{{ Number(billingData.total_cost || 0).toFixed(6) }}</span>
+            </div>
+        </div>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const tableData = ref([]);
+            const searchModel = ref('');
+            const dateRange = ref([]);
+            const chartGroupBy = ref('hour');
+            const statistics = reactive({ total_requests: 0, total_tokens: 0, total_cost: 0 });
+            const pagination = reactive({ current: 1, total: 0, pageSize: 20 });
+
+            // 计费详情
+            const billingVisible = ref(false);
+            const billingLoading = ref(false);
+            const billingData = ref(null);
+
+            var chartInstance = null;
+
+            const columns = [
+                { colKey: 'model_name', title: '模型', width: 180 },
+                { colKey: 'prompt_tokens', title: '输入Token', width: 90 },
+                { colKey: 'completion_tokens', title: '输出Token', width: 90 },
+                { colKey: 'cost', title: '费用(元)', width: 110, cell: 'cost' },
+                { colKey: 'token_name', title: '令牌', width: 110 },
+                { colKey: 'duration', title: '总用时', width: 80, cell: 'duration' },
+                { colKey: 'ttft', title: '首字时间', width: 80, cell: 'ttft' },
+                { colKey: 'is_stream', title: '类型', width: 70, cell: 'is_stream' },
+                { colKey: 'ip', title: 'IP', width: 120 },
+                { colKey: 'created_at', title: '时间', width: 170, cell: 'created_at' }
+            ];
+
+            function formatDate(dateStr) {
+                if (!dateStr) return '-';
+                var d = new Date(dateStr);
+                if (isNaN(d.getTime())) return '-';
+                return d.getFullYear() + '-' +
+                    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getDate()).padStart(2, '0') + ' ' +
+                    String(d.getHours()).padStart(2, '0') + ':' +
+                    String(d.getMinutes()).padStart(2, '0') + ':' +
+                    String(d.getSeconds()).padStart(2, '0');
+            }
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (searchModel.value) params.model_name = searchModel.value;
+                if (dateRange.value && dateRange.value.length === 2) {
+                    params.start_date = dateRange.value[0];
+                    params.end_date = dateRange.value[1];
+                }
+                axios.get('/api/user/logs', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        tableData.value = data.data || [];
+                        pagination.total = data.total || 0;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function fetchStatistics() {
+                axios.get('/api/user/logs/statistics', {
+                    params: { days: 30, group_by: chartGroupBy.value }
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        var data = res.data.data;
+                        var timeStats = data.time_stats || [];
+                        var totalReq = 0, totalTokens = 0, totalCost = 0;
+                        timeStats.forEach(function(d) {
+                            totalReq += Number(d.count || 0);
+                            totalTokens += Number(d.prompt_tokens || 0) + Number(d.completion_tokens || 0);
+                            totalCost += Number(d.cost || 0);
+                        });
+                        statistics.total_requests = totalReq;
+                        statistics.total_tokens = totalTokens;
+                        statistics.total_cost = totalCost;
+                        initChart(timeStats);
+                    }
+                });
+            }
+
+            function initChart(timeStats) {
+                var el = document.getElementById('daily-chart');
+                if (!el) return;
+                if (chartInstance) chartInstance.dispose();
+                chartInstance = echarts.init(el);
+                chartInstance.setOption({
+                    tooltip: { trigger: 'axis' },
+                    legend: { data: ['请求数', '费用'], bottom: 0 },
+                    grid: { left: 50, right: 50, top: 20, bottom: 40 },
+                    xAxis: {
+                        type: 'category',
+                        data: timeStats.map(function(d) { return d.time; }),
+                        axisLabel: { fontSize: 11, rotate: chartGroupBy.value === 'hour' ? 45 : 0 }
+                    },
+                    yAxis: [
+                        { type: 'value', name: '请求数', minInterval: 1 },
+                        { type: 'value', name: '费用' }
+                    ],
+                    series: [
+                        {
+                            name: '请求数', type: 'bar',
+                            data: timeStats.map(function(d) { return d.count; }),
+                            itemStyle: { color: '#0052d9' }
+                        },
+                        {
+                            name: '费用', type: 'line', yAxisIndex: 1,
+                            data: timeStats.map(function(d) { return d.cost; }),
+                            smooth: true, itemStyle: { color: '#e37318' }
+                        }
+                    ]
+                });
+                window.addEventListener('resize', function() { chartInstance && chartInstance.resize(); });
+            }
+
+            function showBilling(row) {
+                billingVisible.value = true;
+                billingLoading.value = true;
+                billingData.value = null;
+                axios.get('/api/user/logs/' + row.id + '/billing').then(function(res) {
+                    if (res.data.code === 0) {
+                        billingData.value = res.data.data;
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.message || '获取计费详情失败');
+                        billingVisible.value = false;
+                    }
+                }).catch(function() {
+                    TDesign.MessagePlugin.error('请求失败');
+                    billingVisible.value = false;
+                }).finally(function() { billingLoading.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            onMounted(function() {
+                fetchList();
+                fetchStatistics();
+            });
+
+            return {
+                loading, tableData, columns, searchModel, dateRange, chartGroupBy,
+                statistics, pagination, fetchList, onPageChange, formatDate,
+                fetchStatistics, billingVisible, billingLoading, billingData, showBilling
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

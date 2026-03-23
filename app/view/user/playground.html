@@ -1,0 +1,484 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<style>
+    /* 操练场整体布局覆盖 */
+    .user-content { padding: 0 !important; overflow: hidden !important; }
+    .playground-wrap { display: flex; height: calc(100vh - 56px); }
+
+    /* 左侧对话列表 */
+    .pg-sidebar { width: 200px; flex-shrink: 0; background: #fafafa; border-right: 1px solid #e7e7e7; display: flex; flex-direction: column; }
+    .pg-sidebar-header { padding: 12px; border-bottom: 1px solid #e7e7e7; }
+    .pg-sidebar-header button { width: 100%; }
+    .pg-chat-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .pg-chat-item { padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; color: #333; margin-bottom: 2px; display: flex; align-items: center; justify-content: space-between; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pg-chat-item:hover { background: #e8e8e8; }
+    .pg-chat-item.active { background: #0052d9; color: #fff; }
+    .pg-chat-item .chat-title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+    .pg-chat-item .chat-del { display: none; flex-shrink: 0; margin-left: 4px; cursor: pointer; font-size: 12px; opacity: 0.6; }
+    .pg-chat-item:hover .chat-del { display: inline; }
+    .pg-chat-item.active .chat-del { display: inline; color: #fff; }
+
+    /* 中间聊天区域 */
+    .pg-main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #fff; }
+    .pg-main-header { height: 44px; border-bottom: 1px solid #e7e7e7; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; flex-shrink: 0; }
+    .pg-main-header .model-label { font-size: 13px; color: #666; }
+    .pg-messages { flex: 1; overflow-y: auto; padding: 16px 24px; }
+    .pg-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #999; font-size: 14px; }
+    .pg-msg { margin-bottom: 20px; display: flex; gap: 10px; }
+    .pg-msg.user { flex-direction: row-reverse; }
+    .pg-msg-avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; flex-shrink: 0; }
+    .pg-msg.user .pg-msg-avatar { background: #0052d9; color: #fff; }
+    .pg-msg.assistant .pg-msg-avatar { background: #e3e3e3; color: #333; }
+    .pg-msg-body { max-width: 72%; padding: 10px 14px; border-radius: 8px; font-size: 14px; line-height: 1.7; word-break: break-word; }
+    .pg-msg.user .pg-msg-body { background: #0052d9; color: #fff; border-top-right-radius: 2px; white-space: pre-wrap; }
+    .pg-msg.assistant .pg-msg-body { background: #f5f5f5; color: #333; border-top-left-radius: 2px; }
+    .pg-msg.assistant .pg-msg-body pre { background: #282c34; color: #abb2bf; padding: 12px; border-radius: 4px; overflow-x: auto; margin: 8px 0; font-size: 13px; line-height: 1.5; }
+    .pg-msg.assistant .pg-msg-body code { font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; }
+    .pg-msg.assistant .pg-msg-body p { margin: 0 0 8px 0; }
+    .pg-msg.assistant .pg-msg-body p:last-child { margin-bottom: 0; }
+
+    /* 输入区域 */
+    .pg-input { border-top: 1px solid #e7e7e7; padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0; }
+    .pg-input textarea { flex: 1; border: 1px solid #dcdcdc; border-radius: 6px; padding: 8px 12px; font-size: 14px; resize: none; outline: none; font-family: inherit; min-height: 40px; max-height: 120px; line-height: 1.5; }
+    .pg-input textarea:focus { border-color: #0052d9; }
+    .pg-input-btns { display: flex; gap: 6px; flex-shrink: 0; }
+
+    /* 右侧参数面板 */
+    .pg-params { width: 280px; flex-shrink: 0; border-left: 1px solid #e7e7e7; background: #fafafa; overflow-y: auto; padding: 16px; }
+    .pg-param-group { margin-bottom: 16px; }
+    .pg-param-group .pg-param-label { font-size: 13px; color: #333; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
+    .pg-param-group .pg-param-label .val { color: #0052d9; font-weight: 500; }
+    .pg-param-group .pg-param-desc { font-size: 12px; color: #999; margin-top: 4px; }
+    .pg-param-group textarea { width: 100%; border: 1px solid #dcdcdc; border-radius: 4px; padding: 8px; font-size: 13px; resize: vertical; outline: none; font-family: inherit; min-height: 80px; }
+    .pg-param-group textarea:focus { border-color: #0052d9; }
+    .pg-section-title { font-size: 14px; font-weight: 500; color: #333; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e7e7e7; }
+
+    /* 令牌选择 */
+    .pg-token-warn { font-size: 12px; color: #e34d59; margin-top: 4px; }
+</style>
+
+<div id="page-app">
+    <div class="playground-wrap">
+        <!-- 左侧：对话历史列表 -->
+        <div class="pg-sidebar">
+            <div class="pg-sidebar-header">
+                <t-button block theme="primary" variant="base" @click="newChat">新建对话</t-button>
+            </div>
+            <div class="pg-chat-list">
+                <div v-for="chat in chatList" :key="chat.id"
+                     class="pg-chat-item" :class="{ active: chat.id === currentChatId }"
+                     @click="switchChat(chat.id)">
+                    <span class="chat-title">{{ chat.title }}</span>
+                    <span class="chat-del" @click.stop="deleteChat(chat.id)" v-if="chatList.length > 1">x</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中间：聊天区域 -->
+        <div class="pg-main">
+            <div class="pg-main-header">
+                <span class="model-label">{{ params.model || '请先选择模型' }}</span>
+                <t-tag v-if="loading" theme="primary" variant="light">生成中...</t-tag>
+            </div>
+            <div class="pg-messages" ref="messagesRef">
+                <div v-if="currentMessages.length === 0" class="pg-empty">选择模型并开始对话</div>
+                <div v-for="(msg, idx) in currentMessages" :key="idx" class="pg-msg" :class="msg.role">
+                    <div class="pg-msg-avatar">{{ msg.role === 'user' ? 'U' : 'AI' }}</div>
+                    <div class="pg-msg-body" v-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : null"
+                         v-if="msg.role === 'assistant'"></div>
+                    <div class="pg-msg-body" v-else>{{ msg.content }}</div>
+                </div>
+            </div>
+            <div class="pg-input">
+                <textarea v-model="inputText" placeholder="输入消息，Ctrl+Enter 发送"
+                    rows="1" @keydown.enter.ctrl.prevent="sendMessage"
+                    @input="autoResize" ref="inputRef" :disabled="loading"></textarea>
+                <div class="pg-input-btns">
+                    <t-button theme="primary" @click="sendMessage" :loading="loading"
+                        :disabled="!inputText.trim() || !params.model || !userToken">发送</t-button>
+                    <t-button v-if="loading" theme="danger" variant="outline" @click="stopGeneration">停止</t-button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：参数控制面板 -->
+        <div class="pg-params">
+            <div class="pg-section-title">模型配置</div>
+
+            <div class="pg-param-group">
+                <div class="pg-param-label">令牌</div>
+                <t-select v-model="selectedTokenId" placeholder="选择令牌" @change="onTokenChange" :style="{width:'100%'}">
+                    <t-option v-for="t in tokenList" :key="t.id" :value="t.id" :label="t.name"></t-option>
+                </t-select>
+                <div v-if="!userToken && tokenList.length === 0" class="pg-token-warn">
+                    没有可用令牌，请先<a href="/user/tokens">创建令牌</a>
+                </div>
+            </div>
+
+            <div class="pg-param-group">
+                <div class="pg-param-label">模型</div>
+                <t-select v-model="params.model" placeholder="选择模型" filterable :style="{width:'100%'}">
+                    <t-option v-for="m in models" :key="m.model_name" :value="m.model_name"
+                        :label="m.display_name || m.model_name"></t-option>
+                </t-select>
+            </div>
+
+            <div class="pg-param-group">
+                <div class="pg-param-label">System Prompt</div>
+                <textarea v-model="params.systemPrompt" placeholder="设置系统提示词（可选）"></textarea>
+            </div>
+
+            <div class="pg-section-title">参数调节</div>
+
+            <div class="pg-param-group">
+                <div class="pg-param-label">
+                    <span>Temperature</span>
+                    <span class="val">{{ params.temperature }}</span>
+                </div>
+                <t-slider v-model="params.temperature" :min="0" :max="2" :step="0.1"></t-slider>
+                <div class="pg-param-desc">控制输出的随机性和创造性</div>
+            </div>
+
+            <div class="pg-param-group">
+                <div class="pg-param-label">
+                    <span>Top P</span>
+                    <span class="val">{{ params.topP }}</span>
+                </div>
+                <t-slider v-model="params.topP" :min="0" :max="1" :step="0.1"></t-slider>
+                <div class="pg-param-desc">核采样，控制词汇选择的多样性</div>
+            </div>
+
+            <div class="pg-param-group">
+                <div class="pg-param-label">
+                    <span>Frequency Penalty</span>
+                    <span class="val">{{ params.frequencyPenalty }}</span>
+                </div>
+                <t-slider v-model="params.frequencyPenalty" :min="-2" :max="2" :step="0.1"></t-slider>
+                <div class="pg-param-desc">频率惩罚，减少重复词汇的出现</div>
+            </div>
+
+            <div class="pg-param-group">
+                <div class="pg-param-label">
+                    <span>Presence Penalty</span>
+                    <span class="val">{{ params.presencePenalty }}</span>
+                </div>
+                <t-slider v-model="params.presencePenalty" :min="-2" :max="2" :step="0.1"></t-slider>
+                <div class="pg-param-desc">存在惩罚，鼓励讨论新话题</div>
+            </div>
+
+            <div class="pg-param-group">
+                <div class="pg-param-label">Max Tokens</div>
+                <t-input-number v-model="params.maxTokens" :min="1" :max="128000" :step="256" :style="{width:'100%'}"></t-input-number>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    var createApp = Vue.createApp;
+    var ref = Vue.ref;
+    var reactive = Vue.reactive;
+    var computed = Vue.computed;
+    var onMounted = Vue.onMounted;
+    var nextTick = Vue.nextTick;
+    var watch = Vue.watch;
+
+    var app = createApp({
+        setup: function() {
+            var loading = ref(false);
+            var abortController = ref(null);
+            var models = ref([]);
+            var tokenList = ref([]);
+            var selectedTokenId = ref(null);
+            var userToken = ref('');
+            var chatIdCounter = ref(1);
+            var chatList = ref([{ id: 1, title: '新对话', messages: [] }]);
+            var currentChatId = ref(1);
+            var inputText = ref('');
+            var messagesRef = ref(null);
+            var inputRef = ref(null);
+
+            var params = reactive({
+                model: '',
+                systemPrompt: '',
+                temperature: 1,
+                topP: 1,
+                frequencyPenalty: 0,
+                presencePenalty: 0,
+                maxTokens: 4096
+            });
+
+            var currentMessages = computed(function() {
+                var chat = chatList.value.find(function(c) { return c.id === currentChatId.value; });
+                return chat ? chat.messages : [];
+            });
+
+            function scrollToBottom() {
+                nextTick(function() {
+                    if (messagesRef.value) {
+                        messagesRef.value.scrollTop = messagesRef.value.scrollHeight;
+                    }
+                });
+            }
+
+            function autoResize(e) {
+                var el = e.target;
+                el.style.height = 'auto';
+                el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+            }
+
+            function fetchModels() {
+                axios.get('/api/user/playground/models').then(function(res) {
+                    if (res.data.code === 0) {
+                        models.value = res.data.data;
+                        if (models.value.length > 0 && !params.model) {
+                            params.model = models.value[0].model_name;
+                        }
+                    }
+                });
+            }
+
+            function fetchTokens() {
+                axios.get('/api/user/playground/tokens').then(function(res) {
+                    if (res.data.code === 0) {
+                        tokenList.value = res.data.data;
+                        if (tokenList.value.length > 0 && !selectedTokenId.value) {
+                            selectedTokenId.value = tokenList.value[0].id;
+                            userToken.value = tokenList.value[0].key;
+                        }
+                    }
+                });
+            }
+
+            function onTokenChange(val) {
+                var t = tokenList.value.find(function(item) { return item.id === val; });
+                userToken.value = t ? t.key : '';
+            }
+
+            function newChat() {
+                chatIdCounter.value++;
+                var newId = chatIdCounter.value;
+                chatList.value.unshift({ id: newId, title: '新对话', messages: [] });
+                currentChatId.value = newId;
+            }
+
+            function switchChat(id) {
+                currentChatId.value = id;
+            }
+
+            function deleteChat(id) {
+                if (chatList.value.length <= 1) return;
+                var idx = chatList.value.findIndex(function(c) { return c.id === id; });
+                if (idx === -1) return;
+                chatList.value.splice(idx, 1);
+                if (currentChatId.value === id) {
+                    currentChatId.value = chatList.value[0].id;
+                }
+            }
+
+            function getCurrentChat() {
+                return chatList.value.find(function(c) { return c.id === currentChatId.value; });
+            }
+
+            // 简易 Markdown 渲染
+            function renderMarkdown(text) {
+                if (!text) return '';
+                var html = text;
+                // 转义 HTML
+                html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                // 代码块
+                html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
+                    return '<pre><code>' + code.trim() + '</code></pre>';
+                });
+                // 行内代码
+                html = html.replace(/`([^`]+)`/g, '<code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:13px;">$1</code>');
+                // 粗体
+                html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                // 斜体
+                html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+                // 换行
+                html = html.replace(/\n/g, '<br>');
+                // 修复 pre 内的 br
+                html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, function(match, code) {
+                    return '<pre><code>' + code.replace(/<br>/g, '\n') + '</code></pre>';
+                });
+                return html;
+            }
+
+            async function sendMessage() {
+                var text = inputText.value.trim();
+                if (!text || !params.model || loading.value || !userToken.value) return;
+
+                var chat = getCurrentChat();
+                if (!chat) return;
+
+                // 添加用户消息
+                chat.messages.push({ role: 'user', content: text });
+                inputText.value = '';
+                if (inputRef.value) {
+                    inputRef.value.style.height = 'auto';
+                }
+
+                // 更新对话标题（取第一条用户消息的前20字）
+                var userMsgCount = chat.messages.filter(function(m) { return m.role === 'user'; }).length;
+                if (userMsgCount === 1) {
+                    chat.title = text.substring(0, 20) + (text.length > 20 ? '...' : '');
+                }
+
+                scrollToBottom();
+
+                // 添加 AI 回复占位
+                var aiMsg = { role: 'assistant', content: '' };
+                chat.messages.push(aiMsg);
+                loading.value = true;
+
+                // 构建 messages 数组
+                var apiMessages = [];
+                if (params.systemPrompt.trim()) {
+                    apiMessages.push({ role: 'system', content: params.systemPrompt.trim() });
+                }
+                // 排除最后一条空的 assistant 消息
+                for (var i = 0; i < chat.messages.length - 1; i++) {
+                    apiMessages.push({ role: chat.messages[i].role, content: chat.messages[i].content });
+                }
+
+                abortController.value = new AbortController();
+
+                try {
+                    var response = await fetch('/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + userToken.value
+                        },
+                        body: JSON.stringify({
+                            model: params.model,
+                            messages: apiMessages,
+                            stream: true,
+                            temperature: params.temperature,
+                            top_p: params.topP,
+                            frequency_penalty: params.frequencyPenalty,
+                            presence_penalty: params.presencePenalty,
+                            max_tokens: params.maxTokens
+                        }),
+                        signal: abortController.value.signal
+                    });
+
+                    if (!response.ok) {
+                        var errText = '';
+                        try {
+                            var errData = await response.json();
+                            errText = errData.error ? (errData.error.message || JSON.stringify(errData.error)) : (errData.msg || '');
+                        } catch(e) {
+                            errText = 'HTTP ' + response.status;
+                        }
+                        aiMsg.content = '[错误] ' + (errText || '请求失败: ' + response.status);
+                        loading.value = false;
+                        scrollToBottom();
+                        return;
+                    }
+
+                    var contentType = response.headers.get('content-type') || '';
+
+                    // 非流式 JSON 响应
+                    if (contentType.indexOf('application/json') !== -1) {
+                        var jsonData = await response.json();
+                        if (jsonData.choices && jsonData.choices[0]) {
+                            aiMsg.content = jsonData.choices[0].message ? jsonData.choices[0].message.content : '';
+                        } else if (jsonData.error) {
+                            aiMsg.content = '[错误] ' + (jsonData.error.message || JSON.stringify(jsonData.error));
+                        } else {
+                            aiMsg.content = '[错误] 无回复内容';
+                        }
+                        loading.value = false;
+                        scrollToBottom();
+                        return;
+                    }
+
+                    // 流式 SSE 响应
+                    var reader = response.body.getReader();
+                    var decoder = new TextDecoder();
+                    var buffer = '';
+
+                    while (true) {
+                        var result = await reader.read();
+                        if (result.done) break;
+                        buffer += decoder.decode(result.value, { stream: true });
+
+                        var lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        for (var j = 0; j < lines.length; j++) {
+                            var line = lines[j].trim();
+                            if (!line.startsWith('data:')) continue;
+                            var dataStr = line.substring(5).trim();
+                            if (dataStr === '[DONE]') continue;
+                            try {
+                                var parsed = JSON.parse(dataStr);
+                                var delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
+                                if (delta && delta.content) {
+                                    aiMsg.content += delta.content;
+                                    scrollToBottom();
+                                }
+                            } catch (e) {
+                                // 忽略解析错误
+                            }
+                        }
+                    }
+                } catch (err) {
+                    if (err.name === 'AbortError') {
+                        if (!aiMsg.content) {
+                            aiMsg.content = '[已停止生成]';
+                        }
+                    } else {
+                        aiMsg.content += '\n[错误] ' + (err.message || '未知错误');
+                    }
+                } finally {
+                    loading.value = false;
+                    abortController.value = null;
+                    scrollToBottom();
+                }
+            }
+
+            function stopGeneration() {
+                if (abortController.value) {
+                    abortController.value.abort();
+                }
+            }
+
+            onMounted(function() {
+                fetchModels();
+                fetchTokens();
+            });
+
+            return {
+                loading: loading,
+                models: models,
+                tokenList: tokenList,
+                selectedTokenId: selectedTokenId,
+                userToken: userToken,
+                chatList: chatList,
+                currentChatId: currentChatId,
+                currentMessages: currentMessages,
+                inputText: inputText,
+                params: params,
+                messagesRef: messagesRef,
+                inputRef: inputRef,
+                newChat: newChat,
+                switchChat: switchChat,
+                deleteChat: deleteChat,
+                onTokenChange: onTokenChange,
+                sendMessage: sendMessage,
+                stopGeneration: stopGeneration,
+                autoResize: autoResize,
+                renderMarkdown: renderMarkdown
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

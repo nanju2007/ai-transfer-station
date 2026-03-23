@@ -1,0 +1,140 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 统计卡片 -->
+    <div class="stat-cards">
+        <div class="stat-card">
+            <div class="label">用户总数</div>
+            <div class="value">{{ stats.userCount }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">渠道数</div>
+            <div class="value">{{ stats.channelCount }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">今日请求数</div>
+            <div class="value">{{ stats.todayRequests }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">今日消费</div>
+            <div class="value">{{ stats.todayCost }}</div>
+        </div>
+    </div>
+
+    <!-- 7天请求趋势 -->
+    <div class="content-card" style="margin-bottom: 16px;">
+        <h3 style="font-size: 16px; font-weight: 500; margin-bottom: 16px;">7天请求趋势</h3>
+        <div id="trend-chart" style="width: 100%; height: 320px;"></div>
+    </div>
+
+    <!-- 最近请求 -->
+    <div class="content-card">
+        <h3 style="font-size: 16px; font-weight: 500; margin-bottom: 16px;">最近请求</h3>
+        <t-table :data="recentLogs" :columns="logColumns" :loading="loading" row-key="id" size="small" :bordered="true">
+        </t-table>
+    </div>
+</div>
+
+<script>
+(function() {
+    var chart = null;
+
+    const { createApp, ref, reactive, onMounted, onBeforeUnmount, nextTick } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const stats = reactive({
+                userCount: 0,
+                channelCount: 0,
+                todayRequests: 0,
+                todayCost: '0.00'
+            });
+            const recentLogs = ref([]);
+            const logColumns = [
+                { colKey: 'id', title: 'ID', width: 80 },
+                { colKey: 'username', title: '用户', width: 120 },
+                { colKey: 'model_name', title: '模型', width: 180 },
+                { colKey: 'token_name', title: '令牌', width: 120 },
+                { colKey: 'prompt_tokens', title: '输入tokens', width: 100 },
+                { colKey: 'completion_tokens', title: '输出tokens', width: 100 },
+                { colKey: 'cost', title: '消费', width: 100 },
+                { colKey: 'duration', title: '耗时(ms)', width: 100 },
+                { colKey: 'created_at', title: '时间', width: 180 }
+            ];
+
+            function fetchDashboard() {
+                loading.value = true;
+                axios.get('/api/admin/dashboard').then(function(res) {
+                    if (res.data.code === 0) {
+                        var d = res.data.data;
+                        stats.userCount = d.user_count || 0;
+                        stats.channelCount = d.channel_count || 0;
+                        stats.todayRequests = d.today_requests || 0;
+                        stats.todayCost = d.today_cost || '0.00';
+                        recentLogs.value = d.recent_logs || [];
+                        nextTick(function() {
+                            renderChart(d.trend || []);
+                        });
+                    }
+                }).finally(function() {
+                    loading.value = false;
+                });
+            }
+
+            function renderChart(trend) {
+                var dom = document.getElementById('trend-chart');
+                if (!dom) return;
+                if (!chart) {
+                    chart = echarts.init(dom);
+                }
+                var dates = trend.map(function(item) { return item.date; });
+                var counts = trend.map(function(item) { return item.count; });
+                // 如果没有数据，填充最近7天日期并显示空图表
+                if (dates.length === 0) {
+                    dates = [];
+                    counts = [];
+                    for (var i = 6; i >= 0; i--) {
+                        var d = new Date();
+                        d.setDate(d.getDate() - i);
+                        dates.push(d.toISOString().slice(0, 10));
+                        counts.push(0);
+                    }
+                }
+                chart.setOption({
+                    tooltip: { trigger: 'axis' },
+                    grid: { left: 50, right: 20, top: 20, bottom: 30 },
+                    xAxis: { type: 'category', data: dates },
+                    yAxis: { type: 'value', minInterval: 1 },
+                    series: [{
+                        type: 'line',
+                        data: counts,
+                        smooth: true,
+                        itemStyle: { color: '#0052d9' },
+                        areaStyle: { color: 'rgba(0,82,217,0.08)' }
+                    }]
+                });
+            }
+
+            onMounted(function() {
+                fetchDashboard();
+                window.addEventListener('resize', function() {
+                    if (chart) chart.resize();
+                });
+            });
+
+            onBeforeUnmount(function() {
+                if (chart) {
+                    chart.dispose();
+                    chart = null;
+                }
+            });
+
+            return { stats, recentLogs, logColumns, loading };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

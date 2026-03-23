@@ -1,0 +1,646 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <t-tabs v-model="activeTab" @change="onTabChange">
+        <!-- Tab 1: 模型管理 -->
+        <t-tab-panel value="models" label="模型管理">
+            <div class="toolbar">
+                <t-input v-model="searchKeyword" placeholder="搜索模型名称" style="width: 220px;" @enter="fetchModelList" clearable></t-input>
+                <t-select v-model="searchProvider" placeholder="供应商" style="width: 150px;" clearable @change="fetchModelList" filterable>
+                    <t-option v-for="p in providers" :key="p.name" :value="p.name" :label="p.display_name"></t-option>
+                </t-select>
+                <t-button theme="primary" @click="fetchModelList">搜索</t-button>
+                <div class="spacer"></div>
+                <t-button theme="default" @click="openImportDialog">从渠道导入</t-button>
+                <t-button theme="default" @click="openBatchCreate">批量添加</t-button>
+                <t-button theme="primary" @click="openModelCreate">添加模型</t-button>
+            </div>
+            <div class="content-card">
+                <t-table :data="modelTableData" :columns="modelColumns" :loading="modelLoading" row-key="id" :bordered="true" size="small">
+                    <template #tags="{ row }">
+                        <t-space size="4px" v-if="row.tags && row.tags.length">
+                            <t-tag v-for="tag in row.tags" :key="tag" size="small" variant="light" theme="primary">{{ tag }}</t-tag>
+                        </t-space>
+                        <span v-else style="color:#ccc;">-</span>
+                    </template>
+                    <template #channel_count="{ row }">
+                        <t-tag theme="primary" variant="light" size="small">{{ row.channel_models_count || 0 }}</t-tag>
+                    </template>
+                    <template #category_name="{ row }">
+                        <span v-if="row.category_name">{{ row.category_name }}</span>
+                        <span v-else style="color:#ccc;">-</span>
+                    </template>
+                    <template #status="{ row }">
+                        <t-tag v-if="row.status === 1" theme="success" variant="light">启用</t-tag>
+                        <t-tag v-else theme="danger" variant="light">禁用</t-tag>
+                    </template>
+                    <template #operation="{ row }">
+                        <t-space size="small">
+                            <t-link theme="primary" @click="openModelEdit(row)">编辑</t-link>
+                            <t-popconfirm content="确定删除该模型？" @confirm="handleModelDelete(row)">
+                                <t-link theme="danger">删除</t-link>
+                            </t-popconfirm>
+                        </t-space>
+                    </template>
+                </t-table>
+                <div class="pagination">
+                    <t-pagination v-model="modelPagination.current" :total="modelPagination.total"
+                        :page-size="modelPagination.pageSize" @current-change="onModelPageChange" show-jumper></t-pagination>
+                </div>
+            </div>
+        </t-tab-panel>
+
+        <!-- Tab 2: 模型分类 -->
+        <t-tab-panel value="categories" label="模型分类">
+            <div class="toolbar">
+                <t-input v-model="catSearchKeyword" placeholder="搜索分类名称" style="width: 220px;" @enter="fetchCatList" clearable></t-input>
+                <t-select v-model="catSearchStatus" placeholder="状态筛选" style="width: 120px;" clearable @change="fetchCatList">
+                    <t-option :value="1" label="启用"></t-option>
+                    <t-option :value="0" label="禁用"></t-option>
+                </t-select>
+                <t-button theme="primary" @click="fetchCatList">搜索</t-button>
+                <div class="spacer"></div>
+                <t-button theme="primary" @click="openCatCreate">新增分类</t-button>
+            </div>
+            <div class="content-card">
+                <t-table :data="catTableData" :columns="catColumns" :loading="catLoading" row-key="id" :bordered="true" size="small">
+                    <template #icon="{ row }">
+                        <span v-if="row.icon">{{ row.icon }}</span>
+                        <span v-else style="color:#999;">-</span>
+                    </template>
+                    <template #cat_status="{ row }">
+                        <t-switch :value="row.status" :custom-value="[1, 0]" @change="handleCatStatusChange(row, $event)" size="small"></t-switch>
+                    </template>
+                    <template #cat_channel_count="{ row }">
+                        <t-tag theme="primary" variant="light">{{ row.channel_count || 0 }}</t-tag>
+                    </template>
+                    <template #cat_operation="{ row }">
+                        <t-space size="small">
+                            <t-link theme="primary" @click="openCatEdit(row)">编辑</t-link>
+                            <t-link theme="primary" @click="openChannelDrawer(row)">管理渠道</t-link>
+                            <t-popconfirm content="确定删除该分类？" @confirm="handleCatDelete(row)">
+                                <t-link theme="danger">删除</t-link>
+                            </t-popconfirm>
+                        </t-space>
+                    </template>
+                </t-table>
+                <div class="pagination">
+                    <t-pagination v-model="catPagination.current" :total="catPagination.total"
+                        :page-size="catPagination.pageSize" @current-change="onCatPageChange" show-jumper></t-pagination>
+                </div>
+            </div>
+        </t-tab-panel>
+    </t-tabs>
+
+    <!-- 添加/编辑模型对话框 -->
+    <t-dialog v-model:visible="modelDialogVisible" :header="modelDialogTitle" width="650px" :confirm-on-enter="false"
+        @confirm="handleModelSubmit" :confirm-btn="{ loading: modelSubmitting }">
+        <t-form :data="modelForm" label-width="100px">
+            <t-form-item label="模型名称" name="model_name">
+                <t-input v-model="modelForm.model_name" placeholder="如 gpt-4o"></t-input>
+            </t-form-item>
+            <t-form-item label="显示名称" name="display_name">
+                <t-input v-model="modelForm.display_name" placeholder="留空则使用模型名称"></t-input>
+            </t-form-item>
+            <t-form-item label="供应商" name="provider">
+                <t-select v-model="modelForm.provider" placeholder="选择供应商" clearable filterable>
+                    <t-option v-for="p in providers" :key="p.name" :value="p.name" :label="p.display_name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="厂商" name="vendor">
+                <t-select v-model="modelForm.vendor" filterable>
+                    <t-option v-for="p in providers" :key="p.name" :value="p.name" :label="p.display_name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="类型" name="type">
+                <t-select v-model="modelForm.type">
+                    <t-option :value="1" label="对话"></t-option>
+                    <t-option :value="2" label="嵌入"></t-option>
+                    <t-option :value="3" label="图像"></t-option>
+                    <t-option :value="4" label="音频"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="描述" name="description">
+                <t-textarea v-model="modelForm.description" placeholder="模型描述（可选）" :autosize="{ minRows: 2 }"></t-textarea>
+            </t-form-item>
+            <t-form-item label="标签" name="tags">
+                <div style="width:100%;">
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;" v-if="modelForm.tags && modelForm.tags.length">
+                        <t-tag v-for="(tag,idx) in modelForm.tags" :key="idx" closable @close="removeTag(idx)" theme="primary" variant="light">{{ tag }}</t-tag>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <t-input v-model="tagInput" placeholder="输入标签后回车" @enter="addTag" style="flex:1;" size="small"></t-input>
+                        <t-button size="small" theme="default" @click="addTag">添加</t-button>
+                    </div>
+                </div>
+            </t-form-item>
+            <t-form-item label="绑定渠道" name="channel_ids">
+                <t-select v-model="modelForm.channel_ids" placeholder="选择渠道（可多选）" multiple filterable :loading="channelListLoading">
+                    <t-option v-for="ch in channelList" :key="ch.id" :value="ch.id" :label="ch.name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="绑定分类" name="category_id">
+                <t-select v-model="modelForm.category_id" placeholder="选择分类（可选）" clearable filterable>
+                    <t-option v-for="cat in categoryList" :key="cat.id" :value="cat.id" :label="cat.name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="状态" name="status">
+                <t-select v-model="modelForm.status">
+                    <t-option :value="1" label="启用"></t-option>
+                    <t-option :value="2" label="禁用"></t-option>
+                </t-select>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+
+    <!-- 批量添加对话框 -->
+    <t-dialog v-model:visible="batchDialogVisible" header="批量添加模型" width="560px" :confirm-on-enter="false"
+        @confirm="handleBatchSubmit" :confirm-btn="{ loading: batchSubmitting }">
+        <t-form :data="batchForm" label-width="100px">
+            <t-form-item label="模型名称" name="model_names">
+                <t-textarea v-model="batchForm.model_names" placeholder="多个模型名称用逗号分隔，如：gpt-4o,gpt-4o-mini,claude-3-5-sonnet" :autosize="{ minRows: 3, maxRows: 6 }"></t-textarea>
+            </t-form-item>
+            <t-form-item label="供应商" name="provider">
+                <t-select v-model="batchForm.provider" placeholder="选择供应商（可选）" clearable filterable>
+                    <t-option v-for="p in providers" :key="p.name" :value="p.name" :label="p.display_name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="绑定渠道" name="channel_ids">
+                <t-select v-model="batchForm.channel_ids" placeholder="选择渠道（可多选）" multiple filterable :loading="channelListLoading">
+                    <t-option v-for="ch in channelList" :key="ch.id" :value="ch.id" :label="ch.name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="绑定分类" name="category_id">
+                <t-select v-model="batchForm.category_id" placeholder="选择分类（可选）" clearable filterable>
+                    <t-option v-for="cat in categoryList" :key="cat.id" :value="cat.id" :label="cat.name"></t-option>
+                </t-select>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+
+    <!-- 从渠道导入对话框 -->
+    <t-dialog v-model:visible="importDialogVisible" header="从渠道导入模型" width="500px" :confirm-on-enter="false"
+        @confirm="handleImportSubmit" :confirm-btn="{ loading: importSubmitting }">
+        <t-form :data="importForm" label-width="100px">
+            <t-form-item label="选择渠道" name="channel_id">
+                <t-select v-model="importForm.channel_id" placeholder="请选择渠道" filterable :loading="channelListLoading">
+                    <t-option v-for="ch in channelList" :key="ch.id" :value="ch.id" :label="ch.name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="绑定分类" name="category_id">
+                <t-select v-model="importForm.category_id" placeholder="选择分类（可选）" clearable filterable>
+                    <t-option v-for="cat in categoryList" :key="cat.id" :value="cat.id" :label="cat.name"></t-option>
+                </t-select>
+            </t-form-item>
+        </t-form>
+        <div v-if="importResult" style="margin-top:12px;padding:12px;background:#f0f2f5;border-radius:6px;">
+            <p>导入完成：共 {{ importResult.total }} 个模型</p>
+            <p>新建 <b style="color:#0052d9;">{{ importResult.created }}</b> 个，跳过 <b style="color:#e37318;">{{ importResult.skipped }}</b> 个</p>
+        </div>
+    </t-dialog>
+
+    <!-- 新增/编辑分类对话框 -->
+    <t-dialog v-model:visible="catDialogVisible" :header="catDialogTitle" width="520px" :confirm-on-enter="false"
+        @confirm="handleCatSubmit" :confirm-btn="{ loading: catSubmitting }">
+        <t-form :data="catForm" label-width="80px">
+            <t-form-item label="名称" name="name">
+                <t-input v-model="catForm.name" placeholder="请输入分类名称"></t-input>
+            </t-form-item>
+            <t-form-item label="描述" name="description">
+                <t-input v-model="catForm.description" placeholder="分类描述（可选）"></t-input>
+            </t-form-item>
+            <t-form-item label="图标" name="icon">
+                <t-input v-model="catForm.icon" placeholder="emoji 或图标名（可选）"></t-input>
+            </t-form-item>
+            <t-form-item label="排序" name="sort_order">
+                <t-input-number v-model="catForm.sort_order" :min="0" style="width:100%;"></t-input-number>
+            </t-form-item>
+            <t-form-item label="绑定渠道" name="channel_ids">
+                <t-select v-model="catForm.channel_ids" placeholder="选择渠道（可多选）" multiple filterable :loading="channelListLoading">
+                    <t-option v-for="ch in channelList" :key="ch.id" :value="ch.id" :label="ch.name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="状态" name="status">
+                <t-switch v-model="catForm.status" :custom-value="[1, 0]"></t-switch>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+
+    <!-- 渠道绑定管理抽屉 -->
+    <t-drawer v-model:visible="drawerVisible" :header="'管理渠道 - ' + (currentCategory ? currentCategory.name : '')" size="75%" :footer="false">
+        <div class="toolbar" style="margin-bottom:12px;">
+            <div class="spacer"></div>
+            <t-button theme="primary" @click="openChBindCreate">添加渠道绑定</t-button>
+        </div>
+        <t-table :data="chBindTableData" :columns="chBindColumns" :loading="chBindLoading" row-key="id" :bordered="true" size="small">
+            <template #ch_name="{ row }">
+                <span v-if="row.channel">{{ row.channel.name }}</span>
+                <span v-else style="color:#999;">渠道已删除</span>
+            </template>
+            <template #ch_status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">启用</t-tag>
+                <t-tag v-else theme="danger" variant="light">禁用</t-tag>
+            </template>
+            <template #ch_operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openChBindEdit(row)">编辑</t-link>
+                    <t-popconfirm content="确定删除该渠道绑定？" @confirm="handleChBindDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+    </t-drawer>
+
+    <!-- 添加/编辑渠道绑定对话框 -->
+    <t-dialog v-model:visible="chBindDialogVisible" :header="chBindDialogTitle" width="560px" :confirm-on-enter="false"
+        @confirm="handleChBindSubmit" :confirm-btn="{ loading: chBindSubmitting }">
+        <t-form :data="chBindForm" label-width="120px">
+            <t-form-item label="渠道" name="channel_id">
+                <t-select v-model="chBindForm.channel_id" placeholder="请选择渠道" filterable :loading="channelListLoading">
+                    <t-option v-for="ch in channelList" :key="ch.id" :value="ch.id" :label="ch.name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="模型名称" name="model_name">
+                <t-input v-model="chBindForm.model_name" placeholder="如 gpt-4o, claude-3-5-sonnet"></t-input>
+            </t-form-item>
+            <t-form-item label="优先级" name="priority">
+                <t-input-number v-model="chBindForm.priority" :min="0" style="width:100%;"></t-input-number>
+            </t-form-item>
+            <t-form-item label="权重" name="weight">
+                <t-input-number v-model="chBindForm.weight" :min="1" style="width:100%;"></t-input-number>
+            </t-form-item>
+            <t-form-item label="状态" name="status">
+                <t-switch v-model="chBindForm.status" :custom-value="[1, 0]"></t-switch>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const activeTab = ref('models');
+            const providers = ref([]);
+            const channelList = ref([]);
+            const channelListLoading = ref(false);
+            const categoryList = ref([]);
+
+            // ==================== Tab1: 模型管理 ====================
+            const modelLoading = ref(false);
+            const modelSubmitting = ref(false);
+            const modelTableData = ref([]);
+            const searchKeyword = ref('');
+            const searchProvider = ref('');
+            const modelDialogVisible = ref(false);
+            const modelDialogTitle = ref('添加模型');
+            const modelEditingId = ref(null);
+            const modelPagination = reactive({ current: 1, total: 0, pageSize: 15 });
+            const tagInput = ref('');
+
+            const defaultModelForm = {
+                model_name: '', display_name: '', vendor: 'openai', provider: '', type: 1,
+                description: '', tags: [], max_context: 0, max_output: 0, sort_order: 0, status: 1,
+                channel_ids: [], category_id: null
+            };
+            const modelForm = reactive({ ...defaultModelForm });
+
+            const modelColumns = [
+                { colKey: 'id', title: 'ID', width: 60 },
+                { colKey: 'model_name', title: '模型名称', width: 200, ellipsis: true },
+                { colKey: 'vendor', title: '厂商', width: 100 },
+                { colKey: 'provider', title: '供应商', width: 100 },
+                { colKey: 'description', title: '描述', ellipsis: true },
+                { colKey: 'tags', title: '标签', width: 160, cell: 'tags' },
+                { colKey: 'channel_count', title: '绑定渠道', width: 90, cell: 'channel_count' },
+                { colKey: 'category_name', title: '绑定分类', width: 100, cell: 'category_name' },
+                { colKey: 'status', title: '状态', width: 70, cell: 'status' },
+                { colKey: 'operation', title: '操作', width: 120, cell: 'operation' }
+            ];
+
+            // 批量添加
+            const batchDialogVisible = ref(false);
+            const batchSubmitting = ref(false);
+            const defaultBatchForm = { model_names: '', provider: '', channel_ids: [], category_id: null };
+            const batchForm = reactive({ ...defaultBatchForm });
+
+            // 从渠道导入
+            const importDialogVisible = ref(false);
+            const importSubmitting = ref(false);
+            const defaultImportForm = { channel_id: null, category_id: null };
+            const importForm = reactive({ ...defaultImportForm });
+            const importResult = ref(null);
+
+            // ==================== Tab2: 模型分类 ====================
+            const catLoading = ref(false);
+            const catSubmitting = ref(false);
+            const catTableData = ref([]);
+            const catSearchKeyword = ref('');
+            const catSearchStatus = ref(null);
+            const catDialogVisible = ref(false);
+            const catDialogTitle = ref('新增分类');
+            const catEditingId = ref(null);
+            const catPagination = reactive({ current: 1, total: 0, pageSize: 20 });
+            const defaultCatForm = { name: '', description: '', icon: '', sort_order: 0, channel_ids: [], status: 1 };
+            const catForm = reactive({ ...defaultCatForm });
+
+            const catColumns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'name', title: '名称', width: 160 },
+                { colKey: 'icon', title: '图标', width: 80, cell: 'icon' },
+                { colKey: 'description', title: '描述', ellipsis: true },
+                { colKey: 'sort_order', title: '排序', width: 80 },
+                { colKey: 'status', title: '状态', width: 80, cell: 'cat_status' },
+                { colKey: 'channel_count', title: '渠道数量', width: 100, cell: 'cat_channel_count' },
+                { colKey: 'operation', title: '操作', width: 200, cell: 'cat_operation' }
+            ];
+
+            // 渠道绑定管理
+            const drawerVisible = ref(false);
+            const currentCategory = ref(null);
+            const chBindLoading = ref(false);
+            const chBindTableData = ref([]);
+            const chBindDialogVisible = ref(false);
+            const chBindDialogTitle = ref('添加渠道绑定');
+            const chBindSubmitting = ref(false);
+            const chBindEditingId = ref(null);
+            const defaultChBindForm = { channel_id: null, model_name: '', priority: 0, weight: 1, status: 1 };
+            const chBindForm = reactive({ ...defaultChBindForm });
+
+            const chBindColumns = [
+                { colKey: 'id', title: 'ID', width: 60 },
+                { colKey: 'channel_name', title: '渠道', width: 160, cell: 'ch_name' },
+                { colKey: 'model_name', title: '模型名称', width: 180 },
+                { colKey: 'priority', title: '优先级', width: 80 },
+                { colKey: 'weight', title: '权重', width: 80 },
+                { colKey: 'status', title: '状态', width: 70, cell: 'ch_status' },
+                { colKey: 'operation', title: '操作', width: 120, cell: 'ch_operation' }
+            ];
+
+            // ========== 公共函数 ==========
+            function fetchProviders() {
+                axios.get('/api/admin/providers').then(function(res) {
+                    if (res.data.code === 0) providers.value = res.data.data.list || res.data.data || [];
+                });
+            }
+            function fetchChannelList() {
+                channelListLoading.value = true;
+                axios.get('/api/admin/channels', { params: { per_page: 200 } }).then(function(res) {
+                    if (res.data.code === 0) channelList.value = res.data.data.list || [];
+                }).finally(function() { channelListLoading.value = false; });
+            }
+            function fetchCategoryList() {
+                axios.get('/api/admin/model-categories/all').then(function(res) {
+                    if (res.data.code === 0) categoryList.value = res.data.data || [];
+                });
+            }
+            function onTabChange(val) {
+                if (val === 'models' && modelTableData.value.length === 0) fetchModelList();
+                if (val === 'categories' && catTableData.value.length === 0) fetchCatList();
+            }
+
+            // ========== Tab1: 模型管理函数 ==========
+            function fetchModelList() {
+                modelLoading.value = true;
+                axios.get('/api/admin/models', {
+                    params: { page: modelPagination.current, per_page: modelPagination.pageSize, keyword: searchKeyword.value, provider: searchProvider.value }
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        modelTableData.value = res.data.data.list || [];
+                        modelPagination.total = res.data.data.total || 0;
+                    }
+                }).finally(function() { modelLoading.value = false; });
+            }
+            function onModelPageChange(page) { modelPagination.current = page; fetchModelList(); }
+
+            function openModelCreate() {
+                modelEditingId.value = null;
+                modelDialogTitle.value = '添加模型';
+                Object.keys(defaultModelForm).forEach(function(k) {
+                    modelForm[k] = Array.isArray(defaultModelForm[k]) ? [] : defaultModelForm[k];
+                });
+                modelDialogVisible.value = true;
+            }
+            function openModelEdit(row) {
+                modelEditingId.value = row.id;
+                modelDialogTitle.value = '编辑模型';
+                Object.keys(defaultModelForm).forEach(function(k) {
+                    if (k === 'tags') { modelForm.tags = Array.isArray(row.tags) ? [...row.tags] : []; }
+                    else if (k === 'channel_ids') { modelForm.channel_ids = []; }
+                    else if (k === 'category_id') { modelForm.category_id = row.category_id || null; }
+                    else { modelForm[k] = row[k] !== undefined && row[k] !== null ? row[k] : defaultModelForm[k]; }
+                });
+                // 加载已绑定渠道
+                axios.get('/api/admin/models/' + row.id).then(function(res) {
+                    if (res.data.code === 0 && res.data.data.channel_models) {
+                        modelForm.channel_ids = res.data.data.channel_models.map(function(cm) { return cm.channel_id; });
+                    }
+                });
+                modelDialogVisible.value = true;
+            }
+            function handleModelSubmit() {
+                if (!modelForm.model_name) { TDesign.MessagePlugin.warning('请输入模型名称'); return; }
+                modelSubmitting.value = true;
+                var data = { ...modelForm };
+                if (modelEditingId.value) {
+                    axios.put('/api/admin/models/' + modelEditingId.value, data).then(function(res) {
+                        if (res.data.code === 0) { TDesign.MessagePlugin.success('更新成功'); modelDialogVisible.value = false; fetchModelList(); }
+                        else { TDesign.MessagePlugin.error(res.data.msg || '更新失败'); }
+                    }).catch(function(err) { TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败'); })
+                    .finally(function() { modelSubmitting.value = false; });
+                } else {
+                    axios.post('/api/admin/models', data).then(function(res) {
+                        if (res.data.code === 0) { TDesign.MessagePlugin.success('创建成功'); modelDialogVisible.value = false; fetchModelList(); }
+                        else { TDesign.MessagePlugin.error(res.data.msg || '创建失败'); }
+                    }).catch(function(err) { TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败'); })
+                    .finally(function() { modelSubmitting.value = false; });
+                }
+            }
+            function handleModelDelete(row) {
+                axios.delete('/api/admin/models/' + row.id).then(function(res) {
+                    if (res.data.code === 0) { TDesign.MessagePlugin.success('删除成功'); fetchModelList(); }
+                    else { TDesign.MessagePlugin.error(res.data.msg || '删除失败'); }
+                });
+            }
+            function addTag() {
+                var v = tagInput.value.trim();
+                if (v && !modelForm.tags.includes(v)) { modelForm.tags.push(v); }
+                tagInput.value = '';
+            }
+            function removeTag(idx) { modelForm.tags.splice(idx, 1); }
+
+            // ========== 批量添加 ==========
+            function openBatchCreate() {
+                Object.keys(defaultBatchForm).forEach(function(k) {
+                    batchForm[k] = Array.isArray(defaultBatchForm[k]) ? [] : defaultBatchForm[k];
+                });
+                batchDialogVisible.value = true;
+            }
+            function handleBatchSubmit() {
+                if (!batchForm.model_names.trim()) { TDesign.MessagePlugin.warning('请输入模型名称'); return; }
+                batchSubmitting.value = true;
+                axios.post('/api/admin/models/batch-create', {
+                    model_names: batchForm.model_names, provider: batchForm.provider,
+                    channel_ids: batchForm.channel_ids, category_id: batchForm.category_id
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        var d = res.data.data;
+                        TDesign.MessagePlugin.success('创建 ' + d.created + ' 个，跳过 ' + d.skipped + ' 个，失败 ' + d.failed + ' 个');
+                        batchDialogVisible.value = false; fetchModelList();
+                    } else { TDesign.MessagePlugin.error(res.data.msg || '批量创建失败'); }
+                }).catch(function(err) { TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败'); })
+                .finally(function() { batchSubmitting.value = false; });
+            }
+
+            // ========== 从渠道导入 ==========
+            function openImportDialog() {
+                Object.keys(defaultImportForm).forEach(function(k) { importForm[k] = defaultImportForm[k]; });
+                importResult.value = null;
+                importDialogVisible.value = true;
+            }
+            function handleImportSubmit() {
+                if (!importForm.channel_id) { TDesign.MessagePlugin.warning('请选择渠道'); return; }
+                importSubmitting.value = true;
+                axios.post('/api/admin/models/import', {
+                    channel_id: importForm.channel_id, category_id: importForm.category_id
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        importResult.value = res.data.data;
+                        TDesign.MessagePlugin.success('导入完成：新增 ' + res.data.data.created + ' 个，跳过 ' + res.data.data.skipped + ' 个');
+                        fetchModelList();
+                    } else { TDesign.MessagePlugin.error(res.data.msg || '导入失败'); }
+                }).catch(function(err) { TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败'); })
+                .finally(function() { importSubmitting.value = false; });
+            }
+
+            // ========== Tab2: 模型分类函数 ==========
+            function fetchCatList() {
+                catLoading.value = true;
+                axios.get('/api/admin/model-categories/list', {
+                    params: { page: catPagination.current, per_page: catPagination.pageSize, keyword: catSearchKeyword.value, status: catSearchStatus.value }
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        catTableData.value = res.data.data.list || [];
+                        catPagination.total = res.data.data.total || 0;
+                    }
+                }).finally(function() { catLoading.value = false; });
+            }
+            function onCatPageChange(page) { catPagination.current = page; fetchCatList(); }
+            function openCatCreate() {
+                catEditingId.value = null; catDialogTitle.value = '新增分类';
+                Object.keys(defaultCatForm).forEach(function(k) { catForm[k] = defaultCatForm[k]; });
+                catDialogVisible.value = true;
+            }
+            function openCatEdit(row) {
+                catEditingId.value = row.id; catDialogTitle.value = '编辑分类';
+                Object.keys(defaultCatForm).forEach(function(k) { catForm[k] = row[k] !== undefined && row[k] !== null ? row[k] : defaultCatForm[k]; });
+                catDialogVisible.value = true;
+            }
+            function handleCatSubmit() {
+                if (!catForm.name) { TDesign.MessagePlugin.warning('请输入分类名称'); return; }
+                catSubmitting.value = true;
+                var data = { ...catForm };
+                if (catEditingId.value) data.id = catEditingId.value;
+                axios.post('/api/admin/model-categories/save', data).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(catEditingId.value ? '更新成功' : '创建成功');
+                        catDialogVisible.value = false; fetchCatList(); fetchCategoryList();
+                    } else { TDesign.MessagePlugin.error(res.data.msg || '操作失败'); }
+                }).catch(function(err) { TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败'); })
+                .finally(function() { catSubmitting.value = false; });
+            }
+            function handleCatDelete(row) {
+                axios.post('/api/admin/model-categories/delete', { id: row.id }).then(function(res) {
+                    if (res.data.code === 0) { TDesign.MessagePlugin.success('删除成功'); fetchCatList(); fetchCategoryList(); }
+                    else { TDesign.MessagePlugin.error(res.data.msg || '删除失败'); }
+                });
+            }
+            function handleCatStatusChange(row, val) {
+                axios.post('/api/admin/model-categories/update-status', { id: row.id, status: val }).then(function(res) {
+                    if (res.data.code === 0) { TDesign.MessagePlugin.success('状态已更新'); fetchCatList(); }
+                    else { TDesign.MessagePlugin.error(res.data.msg || '更新失败'); fetchCatList(); }
+                });
+            }
+
+            // ========== 渠道绑定管理 ==========
+            function openChannelDrawer(row) {
+                currentCategory.value = row;
+                drawerVisible.value = true;
+                fetchChBindList();
+            }
+            function fetchChBindList() {
+                if (!currentCategory.value) return;
+                chBindLoading.value = true;
+                axios.get('/api/admin/model-categories/channels', { params: { category_id: currentCategory.value.id } }).then(function(res) {
+                    if (res.data.code === 0) chBindTableData.value = res.data.data || [];
+                }).finally(function() { chBindLoading.value = false; });
+            }
+            function openChBindCreate() {
+                chBindEditingId.value = null; chBindDialogTitle.value = '添加渠道绑定';
+                Object.keys(defaultChBindForm).forEach(function(k) { chBindForm[k] = defaultChBindForm[k]; });
+                chBindDialogVisible.value = true;
+            }
+            function openChBindEdit(row) {
+                chBindEditingId.value = row.id; chBindDialogTitle.value = '编辑渠道绑定';
+                Object.keys(defaultChBindForm).forEach(function(k) {
+                    chBindForm[k] = row[k] !== undefined && row[k] !== null ? row[k] : defaultChBindForm[k];
+                });
+                chBindDialogVisible.value = true;
+            }
+            function handleChBindSubmit() {
+                if (!chBindForm.channel_id && !chBindEditingId.value) { TDesign.MessagePlugin.warning('请选择渠道'); return; }
+                chBindSubmitting.value = true;
+                var data = { ...chBindForm, category_id: currentCategory.value.id };
+                if (chBindEditingId.value) data.id = chBindEditingId.value;
+                axios.post('/api/admin/model-categories/save-channel', data).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(chBindEditingId.value ? '更新成功' : '创建成功');
+                        chBindDialogVisible.value = false; fetchChBindList(); fetchCatList();
+                    } else { TDesign.MessagePlugin.error(res.data.msg || '操作失败'); }
+                }).catch(function(err) { TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败'); })
+                .finally(function() { chBindSubmitting.value = false; });
+            }
+            function handleChBindDelete(row) {
+                axios.post('/api/admin/model-categories/delete-channel', { id: row.id }).then(function(res) {
+                    if (res.data.code === 0) { TDesign.MessagePlugin.success('删除成功'); fetchChBindList(); fetchCatList(); }
+                    else { TDesign.MessagePlugin.error(res.data.msg || '删除失败'); }
+                });
+            }
+
+            onMounted(function() {
+                fetchProviders();
+                fetchChannelList();
+                fetchCategoryList();
+                fetchModelList();
+            });
+
+            return {
+                activeTab, providers, channelList, channelListLoading, categoryList, onTabChange,
+                // Tab1
+                modelLoading, modelSubmitting, modelTableData, modelColumns, searchKeyword, searchProvider,
+                modelPagination, modelDialogVisible, modelDialogTitle, modelForm, tagInput,
+                fetchModelList, onModelPageChange, openModelCreate, openModelEdit, handleModelSubmit, handleModelDelete,
+                addTag, removeTag,
+                // 批量添加
+                batchDialogVisible, batchSubmitting, batchForm, openBatchCreate, handleBatchSubmit,
+                // 从渠道导入
+                importDialogVisible, importSubmitting, importForm, importResult, openImportDialog, handleImportSubmit,
+                // Tab2
+                catLoading, catSubmitting, catTableData, catColumns, catSearchKeyword, catSearchStatus,
+                catPagination, catDialogVisible, catDialogTitle, catForm,
+                fetchCatList, onCatPageChange, openCatCreate, openCatEdit, handleCatSubmit, handleCatDelete, handleCatStatusChange,
+                // 渠道绑定
+                drawerVisible, currentCategory, chBindLoading, chBindTableData, chBindColumns,
+                chBindDialogVisible, chBindDialogTitle, chBindSubmitting, chBindForm,
+                openChannelDrawer, openChBindCreate, openChBindEdit, handleChBindSubmit, handleChBindDelete
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

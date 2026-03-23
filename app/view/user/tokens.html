@@ -1,0 +1,271 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <div class="spacer"></div>
+        <t-button theme="primary" @click="openCreate">新建令牌</t-button>
+    </div>
+
+    <!-- 表格 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #key_preview="{ row }">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <code style="font-size:12px;">{{ row.key_preview }}</code>
+                    <t-link theme="primary" size="small" @click="copyKey(row)">复制</t-link>
+                </div>
+            </template>
+            <template #category_name="{ row }">
+                <span v-if="!row.category_id || row.category_id === 0" style="color:#999;">全部</span>
+                <t-tag v-else variant="light">{{ row.category ? row.category.name : '未知' }}</t-tag>
+            </template>
+            <template #status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">启用</t-tag>
+                <t-tag v-else theme="danger" variant="light">禁用</t-tag>
+            </template>
+            <template #max_budget="{ row }">
+                <span v-if="row.max_budget > 0">¥{{ Number(row.max_budget).toFixed(4) }}</span>
+                <span v-else style="color:#999;">无限制</span>
+            </template>
+            <template #used_amount="{ row }">
+                <span>¥{{ Number(row.used_amount || 0).toFixed(4) }}</span>
+            </template>
+            <template #expired_at="{ row }">
+                <span v-if="row.expired_at">{{ formatDate(row.expired_at) }}</span>
+                <span v-else style="color:#999;">永不过期</span>
+            </template>
+            <template #created_at="{ row }">
+                {{ formatDate(row.created_at) }}
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openEdit(row)">编辑</t-link>
+                    <t-popconfirm content="确定重置Key？旧Key将立即失效" @confirm="handleResetKey(row)">
+                        <t-link theme="warning">重置Key</t-link>
+                    </t-popconfirm>
+                    <t-link :theme="row.status === 1 ? 'danger' : 'success'" @click="handleToggleStatus(row)">
+                        {{ row.status === 1 ? '禁用' : '启用' }}
+                    </t-link>
+                    <t-popconfirm content="确定删除该令牌？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+    </div>
+
+    <!-- 新建/编辑对话框 -->
+    <t-dialog v-model:visible="dialogVisible" :header="dialogTitle" width="500px" @confirm="handleSubmit"
+        :confirm-btn="{ loading: submitting }">
+        <t-form :data="formData" label-width="100px">
+            <t-form-item label="名称" name="name">
+                <t-input v-model="formData.name" placeholder="请输入令牌名称"></t-input>
+            </t-form-item>
+            <t-form-item label="模型分类" name="category_id">
+                <t-select v-model="formData.category_id" placeholder="请选择模型分类" style="width:100%;">
+                    <t-option :value="0" label="不限制（全部分类）"></t-option>
+                    <t-option v-for="cat in categoryList" :key="cat.id" :value="cat.id" :label="cat.name"></t-option>
+                </t-select>
+                <div style="color:#999;font-size:12px;margin-top:4px;">选择分类后，该令牌只能访问该分类下的模型</div>
+            </t-form-item>
+            <t-form-item label="最大消费额度" name="max_budget">
+                <t-input-number v-model="formData.max_budget" :min="0" :decimal-places="4" style="width:100%;"
+                    placeholder="0 表示无限制（单位：元）"></t-input-number>
+                <div style="color:#999;font-size:12px;margin-top:4px;">设为 0 表示不限制消费额度</div>
+            </t-form-item>
+            <t-form-item label="过期时间" name="expires_at">
+                <t-date-picker v-model="formData.expires_at" enable-time-picker allow-input clearable
+                    placeholder="留空则永不过期" style="width:100%;"></t-date-picker>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+
+    <!-- 创建成功弹窗 -->
+    <t-dialog v-model:visible="keyDialogVisible" header="令牌创建成功" :footer="false" width="520px">
+        <t-alert theme="warning" message="请立即复制令牌Key，此Key仅显示一次，关闭后无法再次查看完整Key。" style="margin-bottom:16px;" />
+        <div style="background:#f5f5f5;padding:12px;border-radius:4px;word-break:break-all;font-family:monospace;font-size:13px;">
+            {{ newTokenKey }}
+        </div>
+        <div style="margin-top:12px;text-align:right;">
+            <t-button theme="primary" @click="copyNewKey">复制Key</t-button>
+        </div>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const submitting = ref(false);
+            const tableData = ref([]);
+            const dialogVisible = ref(false);
+            const dialogTitle = ref('新建令牌');
+            const editingId = ref(null);
+            const keyDialogVisible = ref(false);
+            const newTokenKey = ref('');
+
+            const categoryList = ref([]);
+            const formData = reactive({ name: '', max_budget: 0, expires_at: '', category_id: 0 });
+
+            const columns = [
+                { colKey: 'id', title: 'ID', width: 60 },
+                { colKey: 'name', title: '名称', width: 150 },
+                { colKey: 'key_preview', title: 'Key', width: 200, cell: 'key_preview' },
+                { colKey: 'category_name', title: '模型分类', width: 110, cell: 'category_name' },
+                { colKey: 'status', title: '状态', width: 80, cell: 'status' },
+                { colKey: 'max_budget', title: '最大额度', width: 100, cell: 'max_budget' },
+                { colKey: 'used_amount', title: '已消费', width: 100, cell: 'used_amount' },
+                { colKey: 'created_at', title: '创建时间', width: 170, cell: 'created_at' },
+                { colKey: 'expired_at', title: '过期时间', width: 170, cell: 'expired_at' },
+                { colKey: 'operation', title: '操作', width: 260, cell: 'operation', fixed: 'right' }
+            ];
+
+            function formatDate(dateStr) {
+                if (!dateStr) return '-';
+                var d = new Date(dateStr);
+                if (isNaN(d.getTime())) return '-';
+                return d.getFullYear() + '-' +
+                    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getDate()).padStart(2, '0') + ' ' +
+                    String(d.getHours()).padStart(2, '0') + ':' +
+                    String(d.getMinutes()).padStart(2, '0') + ':' +
+                    String(d.getSeconds()).padStart(2, '0');
+            }
+
+            function fetchList() {
+                loading.value = true;
+                axios.get('/api/user/tokens').then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function fetchCategories() {
+                axios.get('/api/categories').then(function(res) {
+                    if (res.data.code === 0) {
+                        categoryList.value = res.data.data || [];
+                    }
+                });
+            }
+
+            function openCreate() {
+                formData.name = '';
+                formData.max_budget = 0;
+                formData.expires_at = '';
+                formData.category_id = 0;
+                editingId.value = null;
+                dialogTitle.value = '新建令牌';
+                dialogVisible.value = true;
+            }
+
+            function openEdit(row) {
+                editingId.value = row.id;
+                formData.name = row.name;
+                formData.max_budget = row.max_budget || 0;
+                formData.expires_at = row.expired_at || '';
+                formData.category_id = row.category_id || 0;
+                dialogTitle.value = '编辑令牌';
+                dialogVisible.value = true;
+            }
+
+            function handleSubmit() {
+                if (!formData.name.trim()) {
+                    TDesign.MessagePlugin.warning('请输入令牌名称');
+                    return;
+                }
+                submitting.value = true;
+                var data = { name: formData.name, max_budget: formData.max_budget || 0, expires_at: formData.expires_at || null, category_id: formData.category_id || 0 };
+                var promise;
+                if (editingId.value) {
+                    promise = axios.put('/api/user/tokens/' + editingId.value, data);
+                } else {
+                    promise = axios.post('/api/user/tokens', data);
+                }
+                promise.then(function(res) {
+                    if (res.data.code === 0) {
+                        dialogVisible.value = false;
+                        if (!editingId.value && res.data.data && res.data.data.key) {
+                            newTokenKey.value = res.data.data.key;
+                            keyDialogVisible.value = true;
+                        } else {
+                            TDesign.MessagePlugin.success(editingId.value ? '更新成功' : '创建成功');
+                        }
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            function handleDelete(row) {
+                axios.delete('/api/user/tokens/' + row.id).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            function handleToggleStatus(row) {
+                axios.put('/api/user/tokens/' + row.id + '/status').then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(res.data.msg || '状态已更新');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                });
+            }
+
+            function handleResetKey(row) {
+                axios.post('/api/user/tokens/' + row.id + '/reset-key').then(function(res) {
+                    if (res.data.code === 0) {
+                        newTokenKey.value = res.data.data.key;
+                        keyDialogVisible.value = true;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '重置失败');
+                    }
+                });
+            }
+
+            function copyKey(row) {
+                navigator.clipboard.writeText(row.key).then(function() {
+                    TDesign.MessagePlugin.success('已复制到剪贴板');
+                }).catch(function() {
+                    TDesign.MessagePlugin.error('复制失败，请手动复制');
+                });
+            }
+
+            function copyNewKey() {
+                navigator.clipboard.writeText(newTokenKey.value).then(function() {
+                    TDesign.MessagePlugin.success('已复制到剪贴板');
+                }).catch(function() {
+                    TDesign.MessagePlugin.error('复制失败，请手动复制');
+                });
+            }
+
+            onMounted(function() { fetchList(); fetchCategories(); });
+
+            return {
+                loading, submitting, tableData, columns, dialogVisible, dialogTitle,
+                formData, keyDialogVisible, newTokenKey, categoryList,
+                fetchList, openCreate, openEdit, handleSubmit, handleDelete,
+                handleToggleStatus, handleResetKey, copyKey, copyNewKey, formatDate
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

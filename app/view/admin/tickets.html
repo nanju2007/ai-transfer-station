@@ -1,0 +1,422 @@
+<?php $currentPage = 'tickets'; $pageTitle = '工单管理'; ?>
+<?php include __DIR__ . '/header.html'; ?>
+
+<style>
+    .stat-card .icon { width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+    .stat-card { display: flex; align-items: center; gap: 16px; }
+    .stat-card .icon svg { width: 24px; height: 24px; fill: #fff; }
+    .stat-card.orange .icon { background: #e37318; }
+    .stat-card.blue .icon { background: #0052d9; }
+    .stat-card.green .icon { background: #2ba471; }
+    .stat-card.gray .icon { background: #8b8b8b; }
+    .stat-card.orange .value { color: #e37318; }
+    .stat-card.blue .value { color: #0052d9; }
+    .stat-card.green .value { color: #2ba471; }
+    .stat-card.gray .value { color: #8b8b8b; }
+
+    .chat-area { max-height: 420px; overflow-y: auto; padding: 16px; background: #f5f5f5; border-radius: 6px; margin: 12px 0; }
+    .chat-msg { display: flex; margin-bottom: 16px; }
+    .chat-msg.user { justify-content: flex-start; }
+    .chat-msg.admin { justify-content: flex-end; }
+    .chat-bubble { max-width: 75%; padding: 10px 14px; border-radius: 8px; font-size: 14px; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
+    .chat-msg.user .chat-bubble { background: #fff; border: 1px solid #e7e7e7; }
+    .chat-msg.admin .chat-bubble { background: #0052d9; color: #fff; }
+    .chat-meta { font-size: 12px; color: #999; margin-bottom: 4px; }
+    .chat-msg.admin .chat-meta { text-align: right; }
+    .reply-box { border-top: 1px solid #e7e7e7; padding-top: 12px; }
+    .reply-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+
+    .ticket-info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; padding: 12px 0; border-bottom: 1px solid #e7e7e7; margin-bottom: 4px; }
+    .ticket-info .info-item { font-size: 13px; color: #666; }
+    .ticket-info .info-item .info-label { color: #999; margin-right: 8px; }
+    .ticket-content-block { padding: 12px 0; border-bottom: 1px solid #e7e7e7; margin-bottom: 4px; }
+    .ticket-content-block .content-title { font-size: 13px; color: #999; margin-bottom: 6px; }
+    .ticket-content-block .content-body { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+</style>
+
+<div id="page-app">
+    <!-- 统计卡片 -->
+    <div class="stat-cards">
+        <div class="stat-card orange">
+            <div class="icon">
+                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            </div>
+            <div>
+                <div class="label">待处理</div>
+                <div class="value">{{ stats.pending || 0 }}</div>
+            </div>
+        </div>
+        <div class="stat-card blue">
+            <div class="icon">
+                <svg viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+            </div>
+            <div>
+                <div class="label">处理中</div>
+                <div class="value">{{ stats.processing || 0 }}</div>
+            </div>
+        </div>
+        <div class="stat-card green">
+            <div class="icon">
+                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+            </div>
+            <div>
+                <div class="label">已解决</div>
+                <div class="value">{{ stats.resolved || 0 }}</div>
+            </div>
+        </div>
+        <div class="stat-card gray">
+            <div class="icon">
+                <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </div>
+            <div>
+                <div class="label">已关闭</div>
+                <div class="value">{{ stats.closed || 0 }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 工单列表 -->
+    <div class="content-card">
+        <div class="toolbar">
+            <t-input v-model="filters.keyword" placeholder="搜索标题" style="width:200px;" @enter="fetchList" clearable>
+                <template #suffixIcon>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="cursor:pointer;" @click="fetchList"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                </template>
+            </t-input>
+            <t-select v-model="filters.status" placeholder="状态筛选" style="width:130px;" clearable @change="fetchList">
+                <t-option value="pending" label="待处理"></t-option>
+                <t-option value="processing" label="处理中"></t-option>
+                <t-option value="resolved" label="已解决"></t-option>
+                <t-option value="closed" label="已关闭"></t-option>
+            </t-select>
+            <t-select v-model="filters.category" placeholder="分类筛选" style="width:130px;" clearable @change="fetchList">
+                <t-option value="general" label="一般咨询"></t-option>
+                <t-option value="billing" label="账单相关"></t-option>
+                <t-option value="technical" label="技术问题"></t-option>
+                <t-option value="suggestion" label="建议反馈"></t-option>
+            </t-select>
+            <t-select v-model="filters.priority" placeholder="优先级筛选" style="width:130px;" clearable @change="fetchList">
+                <t-option value="low" label="低"></t-option>
+                <t-option value="normal" label="普通"></t-option>
+                <t-option value="high" label="高"></t-option>
+                <t-option value="urgent" label="紧急"></t-option>
+            </t-select>
+            <div class="spacer"></div>
+            <t-button theme="default" @click="resetFilters">重置</t-button>
+        </div>
+
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #user="{ row }">
+                {{ row.user ? (row.user.display_name || row.user.username) : '-' }}
+            </template>
+            <template #category="{ row }">
+                <t-tag variant="light">{{ categoryMap[row.category] || row.category }}</t-tag>
+            </template>
+            <template #status="{ row }">
+                <t-tag :theme="statusTheme[row.status]" variant="light">{{ statusMap[row.status] || row.status }}</t-tag>
+            </template>
+            <template #priority="{ row }">
+                <t-tag :theme="priorityTheme[row.priority]" variant="light">{{ priorityMap[row.priority] || row.priority }}</t-tag>
+            </template>
+            <template #last_reply_at="{ row }">
+                {{ formatDate(row.last_reply_at) }}
+            </template>
+            <template #created_at="{ row }">
+                {{ formatDate(row.created_at) }}
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openDetail(row)">详情</t-link>
+                    <t-dropdown :options="getStatusOptions(row.status)" @click="(item) => changeStatus(row, item.value)">
+                        <t-link theme="default">状态</t-link>
+                    </t-dropdown>
+                    <t-dropdown :options="priorityOptions" @click="(item) => changePriority(row, item.value)">
+                        <t-link theme="default">优先级</t-link>
+                    </t-dropdown>
+                    <t-popconfirm content="确定删除该工单及所有回复？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper></t-pagination>
+        </div>
+    </div>
+
+    <!-- 工单详情抽屉 -->
+    <t-drawer v-model:visible="drawerVisible" :header="'工单详情 #' + (currentTicket.id || '')" size="640px" :footer="false">
+        <template v-if="currentTicket.id">
+            <div class="ticket-info">
+                <div class="info-item"><span class="info-label">标题：</span>{{ currentTicket.title }}</div>
+                <div class="info-item"><span class="info-label">用户：</span>{{ currentTicket.user ? (currentTicket.user.display_name || currentTicket.user.username) : '-' }}</div>
+                <div class="info-item"><span class="info-label">分类：</span><t-tag variant="light" size="small">{{ categoryMap[currentTicket.category] }}</t-tag></div>
+                <div class="info-item"><span class="info-label">状态：</span><t-tag :theme="statusTheme[currentTicket.status]" variant="light" size="small">{{ statusMap[currentTicket.status] }}</t-tag></div>
+                <div class="info-item"><span class="info-label">优先级：</span><t-tag :theme="priorityTheme[currentTicket.priority]" variant="light" size="small">{{ priorityMap[currentTicket.priority] }}</t-tag></div>
+                <div class="info-item"><span class="info-label">创建时间：</span>{{ formatDate(currentTicket.created_at) }}</div>
+            </div>
+
+            <!-- 工单原始内容 -->
+            <div class="ticket-content-block">
+                <div class="content-title">工单内容</div>
+                <div class="content-body">{{ currentTicket.content }}</div>
+            </div>
+
+            <!-- 对话记录 -->
+            <div ref="chatAreaRef" class="chat-area">
+                <div v-for="reply in replies" :key="reply.id" class="chat-msg" :class="reply.is_admin ? 'admin' : 'user'">
+                    <div>
+                        <div class="chat-meta">
+                            {{ reply.is_admin ? '管理员' : (reply.user ? (reply.user.display_name || reply.user.username) : '用户') }}
+                            · {{ formatDate(reply.created_at) }}
+                        </div>
+                        <div class="chat-bubble">{{ reply.content }}</div>
+                    </div>
+                </div>
+                <div v-if="replies.length === 0" style="text-align:center;color:#999;padding:20px;">暂无回复</div>
+            </div>
+
+            <!-- 回复输入 -->
+            <div class="reply-box" v-if="currentTicket.status !== 'closed'">
+                <t-textarea v-model="replyContent" placeholder="输入回复内容..." :autosize="{ minRows: 3, maxRows: 6 }"></t-textarea>
+                <div class="reply-actions">
+                    <t-button theme="default" variant="outline" :loading="replying" @click="sendReply(true)">回复并标记已解决</t-button>
+                    <t-button theme="primary" :loading="replying" @click="sendReply(false)">发送回复</t-button>
+                </div>
+            </div>
+            <div v-else style="text-align:center;color:#999;padding:16px 0;border-top:1px solid #e7e7e7;margin-top:12px;">
+                工单已关闭，无法回复
+            </div>
+        </template>
+    </t-drawer>
+</div>
+
+<script>
+(function() {
+    var ref = Vue.ref;
+    var reactive = Vue.reactive;
+    var onMounted = Vue.onMounted;
+    var nextTick = Vue.nextTick;
+
+    var statusMap = { pending: '待处理', processing: '处理中', resolved: '已解决', closed: '已关闭' };
+    var categoryMap = { general: '一般咨询', billing: '账单相关', technical: '技术问题', suggestion: '建议反馈' };
+    var priorityMap = { low: '低', normal: '普通', high: '高', urgent: '紧急' };
+    var statusTheme = { pending: 'warning', processing: 'primary', resolved: 'success', closed: 'default' };
+    var priorityTheme = { low: 'default', normal: 'primary', high: 'warning', urgent: 'danger' };
+
+    var app = Vue.createApp({
+        setup() {
+            var loading = ref(false);
+            var replying = ref(false);
+            var tableData = ref([]);
+            var stats = reactive({ pending: 0, processing: 0, resolved: 0, closed: 0 });
+            var pagination = reactive({ current: 1, total: 0, pageSize: 15 });
+            var filters = reactive({ keyword: '', status: '', category: '', priority: '' });
+
+            var drawerVisible = ref(false);
+            var currentTicket = ref({});
+            var replies = ref([]);
+            var replyContent = ref('');
+            var chatAreaRef = ref(null);
+
+            var columns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'title', title: '标题', ellipsis: true },
+                { colKey: 'user', title: '用户', width: 110, cell: 'user' },
+                { colKey: 'category', title: '分类', width: 100, cell: 'category' },
+                { colKey: 'status', title: '状态', width: 90, cell: 'status' },
+                { colKey: 'priority', title: '优先级', width: 80, cell: 'priority' },
+                { colKey: 'last_reply_at', title: '最后回复', width: 160, cell: 'last_reply_at' },
+                { colKey: 'created_at', title: '创建时间', width: 160, cell: 'created_at' },
+                { colKey: 'operation', title: '操作', width: 220, cell: 'operation', fixed: 'right' }
+            ];
+
+            var priorityOptions = [
+                { content: '低', value: 'low' },
+                { content: '普通', value: 'normal' },
+                { content: '高', value: 'high' },
+                { content: '紧急', value: 'urgent' }
+            ];
+
+            function getStatusOptions(current) {
+                var all = [
+                    { content: '处理中', value: 'processing' },
+                    { content: '已解决', value: 'resolved' },
+                    { content: '已关闭', value: 'closed' }
+                ];
+                return all.filter(function(item) { return item.value !== current; });
+            }
+
+            function formatDate(dateStr) {
+                if (!dateStr) return '-';
+                var d = new Date(dateStr);
+                if (isNaN(d.getTime())) return '-';
+                return d.getFullYear() + '-' +
+                    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                    String(d.getDate()).padStart(2, '0') + ' ' +
+                    String(d.getHours()).padStart(2, '0') + ':' +
+                    String(d.getMinutes()).padStart(2, '0') + ':' +
+                    String(d.getSeconds()).padStart(2, '0');
+            }
+
+            function fetchStats() {
+                axios.get('/api/admin/tickets/stats').then(function(res) {
+                    if (res.data.code === 0) {
+                        Object.assign(stats, res.data.data);
+                    }
+                });
+            }
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, per_page: pagination.pageSize };
+                if (filters.keyword) params.keyword = filters.keyword;
+                if (filters.status) params.status = filters.status;
+                if (filters.category) params.category = filters.category;
+                if (filters.priority) params.priority = filters.priority;
+                axios.get('/api/admin/tickets/list', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                        pagination.total = res.data.data.total;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            function resetFilters() {
+                filters.keyword = '';
+                filters.status = '';
+                filters.category = '';
+                filters.priority = '';
+                pagination.current = 1;
+                fetchList();
+            }
+
+            function scrollChatToBottom() {
+                nextTick(function() {
+                    var el = chatAreaRef.value;
+                    if (el) el.scrollTop = el.scrollHeight;
+                });
+            }
+
+            function openDetail(row) {
+                currentTicket.value = {};
+                replies.value = [];
+                replyContent.value = '';
+                drawerVisible.value = true;
+                axios.get('/api/admin/tickets/detail', { params: { id: row.id } }).then(function(res) {
+                    if (res.data.code === 0) {
+                        currentTicket.value = res.data.data.ticket;
+                        replies.value = res.data.data.replies;
+                        scrollChatToBottom();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '获取详情失败');
+                    }
+                });
+            }
+
+            function sendReply(resolveAfter) {
+                if (!replyContent.value.trim()) {
+                    TDesign.MessagePlugin.warning('请输入回复内容');
+                    return;
+                }
+                replying.value = true;
+                axios.post('/api/admin/tickets/reply', {
+                    ticket_id: currentTicket.value.id,
+                    content: replyContent.value
+                }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('回复成功');
+                        replyContent.value = '';
+                        // 刷新详情
+                        axios.get('/api/admin/tickets/detail', { params: { id: currentTicket.value.id } }).then(function(r) {
+                            if (r.data.code === 0) {
+                                currentTicket.value = r.data.data.ticket;
+                                replies.value = r.data.data.replies;
+                                scrollChatToBottom();
+                            }
+                        });
+                        if (resolveAfter) {
+                            axios.post('/api/admin/tickets/update-status', {
+                                id: currentTicket.value.id,
+                                status: 'resolved'
+                            }).then(function(r2) {
+                                if (r2.data.code === 0) {
+                                    currentTicket.value.status = 'resolved';
+                                    fetchList();
+                                    fetchStats();
+                                }
+                            });
+                        } else {
+                            fetchList();
+                            fetchStats();
+                        }
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '回复失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { replying.value = false; });
+            }
+
+            function changeStatus(row, status) {
+                axios.post('/api/admin/tickets/update-status', { id: row.id, status: status }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('状态已更新');
+                        fetchList();
+                        fetchStats();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '更新失败');
+                    }
+                });
+            }
+
+            function changePriority(row, priority) {
+                axios.post('/api/admin/tickets/update-priority', { id: row.id, priority: priority }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('优先级已更新');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '更新失败');
+                    }
+                });
+            }
+
+            function handleDelete(row) {
+                axios.post('/api/admin/tickets/delete', { id: row.id }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                        fetchStats();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            onMounted(function() {
+                fetchStats();
+                fetchList();
+            });
+
+            return {
+                loading, replying, tableData, stats, pagination, filters, columns,
+                statusMap, categoryMap, priorityMap, statusTheme, priorityTheme,
+                drawerVisible, currentTicket, replies, replyContent, chatAreaRef,
+                priorityOptions, getStatusOptions, formatDate,
+                fetchList, onPageChange, resetFilters, openDetail,
+                sendReply, changeStatus, changePriority, handleDelete
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

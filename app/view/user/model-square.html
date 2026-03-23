@@ -1,0 +1,406 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <div style="margin-bottom: 16px;">
+        <div style="font-size: 20px; font-weight: 600; color: #333;">模型广场</div>
+        <div style="font-size: 13px; color: #999; margin-top: 4px;">浏览所有可用模型</div>
+    </div>
+
+    <!-- 分类标签 -->
+    <div class="content-card" style="margin-bottom: 16px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span style="font-size: 13px; color: #666; margin-right: 4px;">分类：</span>
+            <t-tag :theme="activeCategory === null ? 'primary' : 'default'"
+                :variant="activeCategory === null ? 'light' : 'outline'"
+                style="cursor: pointer;"
+                @click="onCategoryChange(null)">全部</t-tag>
+            <t-tag v-for="cat in categories" :key="cat.id"
+                :theme="activeCategory === cat.id ? 'primary' : 'default'"
+                :variant="activeCategory === cat.id ? 'light' : 'outline'"
+                style="cursor: pointer;"
+                @click="onCategoryChange(cat.id)">
+                <span v-if="cat.icon" style="margin-right: 4px;">{{ cat.icon }}</span>
+                {{ cat.name }}
+                <span v-if="cat.channel_count" style="margin-left: 4px; font-size: 11px; opacity: 0.7;">({{ cat.channel_count }})</span>
+            </t-tag>
+        </div>
+    </div>
+
+    <!-- 全部模型视图（原有功能） -->
+    <template v-if="activeCategory === null">
+        <!-- 筛选区域 -->
+        <div class="content-card" style="margin-bottom: 16px;">
+            <!-- 类型筛选 -->
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+                <span style="font-size: 13px; color: #666; margin-right: 4px;">类型：</span>
+                <t-tag v-for="opt in typeOptions" :key="opt.value"
+                    :theme="filter.type === opt.value ? 'primary' : 'default'"
+                    :variant="filter.type === opt.value ? 'light' : 'outline'"
+                    style="cursor: pointer;"
+                    @click="onTypeFilter(opt.value)">{{ opt.label }}</t-tag>
+            </div>
+            <!-- 供应商筛选 -->
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+                <span style="font-size: 13px; color: #666; margin-right: 4px;">供应商：</span>
+                <t-tag :theme="filter.provider === '' ? 'primary' : 'default'"
+                    :variant="filter.provider === '' ? 'light' : 'outline'"
+                    style="cursor: pointer;"
+                    @click="onProviderFilter('')">全部</t-tag>
+                <t-tag v-for="p in providers" :key="p"
+                    :theme="filter.provider === p ? 'primary' : 'default'"
+                    :variant="filter.provider === p ? 'light' : 'outline'"
+                    style="cursor: pointer;"
+                    @click="onProviderFilter(p)">{{ p }}</t-tag>
+            </div>
+            <!-- 搜索框 -->
+            <div>
+                <t-input v-model="filter.keyword" placeholder="搜索模型名称或显示名称" clearable
+                    style="width: 320px;" @enter="fetchModels" @clear="fetchModels">
+                    <template #suffixIcon>
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="cursor:pointer;" @click="fetchModels"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                    </template>
+                </t-input>
+            </div>
+        </div>
+
+        <!-- 模型卡片网格 -->
+        <t-loading :loading="loading" style="min-height: 200px;">
+            <div v-if="models.length > 0" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
+                <div v-for="model in models" :key="model.id" class="model-card">
+                    <div class="model-card-header">
+                        <div class="model-card-name">{{ model.display_name || model.model_name }}</div>
+                    </div>
+                    <div class="model-card-id">{{ model.model_name }}</div>
+                    <div class="model-card-tags">
+                        <t-tag size="small" variant="light"
+                            :theme="typeTheme(model.type)">{{ typeLabel(model.type) }}</t-tag>
+                        <t-tag v-if="model.provider" size="small" variant="outline" theme="default">{{ model.provider }}</t-tag>
+                    </div>
+                    <div v-if="model.input_price || model.output_price" class="model-card-pricing">
+                        <span v-if="model.input_price">输入: {{ model.input_price }}</span>
+                        <span v-if="model.input_price && model.output_price" style="margin: 0 6px; color: #ddd;">|</span>
+                        <span v-if="model.output_price">输出: {{ model.output_price }}</span>
+                    </div>
+                </div>
+            </div>
+            <div v-else-if="!loading" style="text-align: center; padding: 60px 0; color: #999;">
+                暂无模型数据
+            </div>
+        </t-loading>
+    </template>
+
+    <!-- 分类视图 -->
+    <template v-else>
+        <t-loading :loading="categoryLoading" style="min-height: 200px;">
+            <!-- 分类信息 -->
+            <div v-if="categoryInfo" class="content-card" style="margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span v-if="categoryInfo.icon" style="font-size: 20px;">{{ categoryInfo.icon }}</span>
+                    <span style="font-size: 16px; font-weight: 600; color: #333;">{{ categoryInfo.name }}</span>
+                </div>
+                <div v-if="categoryInfo.description" style="font-size: 13px; color: #999; margin-top: 6px;">{{ categoryInfo.description }}</div>
+            </div>
+
+            <!-- 分类下的模型列表 -->
+            <div v-if="categoryModels.length > 0" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px;">
+                <div v-for="item in categoryModels" :key="item.model_name" class="model-card category-model-card">
+                    <div class="model-card-header">
+                        <div class="model-card-name">{{ item.model_name }}</div>
+                        <t-tag size="small" variant="light" theme="primary" v-if="item.channels.length > 1">
+                            {{ item.channels.length }} 个渠道
+                        </t-tag>
+                    </div>
+
+                    <!-- 价格范围摘要 -->
+                    <div class="category-price-summary">
+                        <div v-if="item.min_input_price !== null" class="price-range-item">
+                            <span class="price-label">输入</span>
+                            <span class="price-value" v-if="item.min_input_price === item.max_input_price">
+                                ¥{{ formatPrice(item.min_input_price) }}/千tokens
+                            </span>
+                            <span class="price-value" v-else>
+                                ¥{{ formatPrice(item.min_input_price) }} ~ ¥{{ formatPrice(item.max_input_price) }}/千tokens
+                            </span>
+                        </div>
+                        <div v-if="item.min_output_price !== null" class="price-range-item">
+                            <span class="price-label">输出</span>
+                            <span class="price-value" v-if="item.min_output_price === item.max_output_price">
+                                ¥{{ formatPrice(item.min_output_price) }}/千tokens
+                            </span>
+                            <span class="price-value" v-else>
+                                ¥{{ formatPrice(item.min_output_price) }} ~ ¥{{ formatPrice(item.max_output_price) }}/千tokens
+                            </span>
+                        </div>
+                        <div v-if="item.min_input_price === null && item.min_output_price === null" style="font-size: 12px; color: #ccc;">
+                            暂无价格信息
+                        </div>
+                    </div>
+
+                    <!-- 渠道明细（多渠道时展开） -->
+                    <div v-if="item.channels.length > 1" class="channel-detail-list">
+                        <div class="channel-detail-header">各渠道价格明细</div>
+                        <div v-for="ch in item.channels" :key="ch.id" class="channel-detail-row">
+                            <span class="channel-name">
+                                {{ ch.channel_name }}
+                                <t-tag v-if="ch.has_custom_price" size="small" variant="light" theme="warning" style="margin-left: 4px;">自定义</t-tag>
+                            </span>
+                            <span class="channel-prices">
+                                <span v-if="ch.input_price !== null">输入 ¥{{ formatPrice(ch.input_price) }}</span>
+                                <span v-if="ch.input_price !== null && ch.output_price !== null" style="margin: 0 4px; color: #ddd;">|</span>
+                                <span v-if="ch.output_price !== null">输出 ¥{{ formatPrice(ch.output_price) }}</span>
+                                <span v-if="ch.input_price === null && ch.output_price === null" style="color: #ccc;">-</span>
+                            </span>
+                        </div>
+                    </div>
+                    <!-- 单渠道时直接显示渠道名 -->
+                    <div v-else-if="item.channels.length === 1" class="channel-single-info">
+                        <span style="font-size: 12px; color: #999;">渠道：{{ item.channels[0].channel_name }}</span>
+                        <t-tag v-if="item.channels[0].has_custom_price" size="small" variant="light" theme="warning" style="margin-left: 4px;">自定义价格</t-tag>
+                    </div>
+                </div>
+            </div>
+            <div v-else-if="!categoryLoading" style="text-align: center; padding: 60px 0; color: #999;">
+                该分类下暂无模型数据
+            </div>
+        </t-loading>
+    </template>
+</div>
+
+<style>
+.model-card {
+    background: #fff;
+    border: 1px solid #e7e7e7;
+    border-radius: 6px;
+    padding: 16px;
+    transition: box-shadow 0.2s;
+}
+.model-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.model-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+.model-card-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: #333;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.model-card-id {
+    font-size: 12px;
+    color: #999;
+    margin-bottom: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.model-card-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.model-card-pricing {
+    font-size: 12px;
+    color: #666;
+    padding-top: 8px;
+    border-top: 1px solid #f0f0f0;
+}
+
+/* 分类视图样式 */
+.category-model-card {
+    padding: 16px;
+}
+.category-price-summary {
+    margin: 10px 0;
+    padding: 8px 12px;
+    background: #f9f9f9;
+    border-radius: 4px;
+}
+.price-range-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    line-height: 24px;
+}
+.price-label {
+    color: #999;
+    font-size: 12px;
+}
+.price-value {
+    color: #e6522c;
+    font-weight: 500;
+}
+.channel-detail-list {
+    border-top: 1px solid #f0f0f0;
+    padding-top: 10px;
+    margin-top: 4px;
+}
+.channel-detail-header {
+    font-size: 12px;
+    color: #999;
+    margin-bottom: 6px;
+}
+.channel-detail-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    line-height: 26px;
+    padding: 0 4px;
+}
+.channel-detail-row:nth-child(even) {
+    background: #fafafa;
+}
+.channel-name {
+    color: #666;
+    display: flex;
+    align-items: center;
+}
+.channel-prices {
+    color: #333;
+    white-space: nowrap;
+}
+.channel-single-info {
+    display: flex;
+    align-items: center;
+    padding-top: 8px;
+    border-top: 1px solid #f0f0f0;
+    margin-top: 4px;
+}
+</style>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            const loading = ref(false);
+            const models = ref([]);
+            const providers = ref([]);
+            const filter = reactive({
+                type: '',
+                provider: '',
+                keyword: ''
+            });
+            const typeOptions = [
+                { label: '全部', value: '' },
+                { label: '对话', value: 'chat' },
+                { label: '向量', value: 'embedding' },
+                { label: '图像', value: 'image' },
+                { label: '音频', value: 'audio' },
+                { label: '其他', value: 'other' }
+            ];
+
+            // 分类相关
+            const categories = ref([]);
+            const activeCategory = ref(null);
+            const categoryLoading = ref(false);
+            const categoryInfo = ref(null);
+            const categoryModels = ref([]);
+
+            function typeLabel(type) {
+                var map = { chat: '对话', embedding: '向量', image: '图像', audio: '音频', other: '其他' };
+                return map[type] || type || '未知';
+            }
+
+            function typeTheme(type) {
+                var map = { chat: 'primary', embedding: 'success', image: 'warning', audio: 'danger', other: 'default' };
+                return map[type] || 'default';
+            }
+
+            function formatPrice(price) {
+                if (price === null || price === undefined) return '-';
+                var n = parseFloat(price);
+                if (isNaN(n)) return '-';
+                return n % 1 === 0 ? n.toString() : n.toFixed(4).replace(/0+$/, '');
+            }
+
+            function fetchModels() {
+                loading.value = true;
+                var params = {};
+                if (filter.type) params.type = filter.type;
+                if (filter.provider) params.provider = filter.provider;
+                if (filter.keyword) params.keyword = filter.keyword;
+
+                axios.get('/api/user/model-square', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        models.value = res.data.data;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function fetchProviders() {
+                axios.get('/api/user/model-square/providers').then(function(res) {
+                    if (res.data.code === 0) {
+                        providers.value = res.data.data;
+                    }
+                });
+            }
+
+            function fetchCategories() {
+                axios.get('/api/categories').then(function(res) {
+                    if (res.data.code === 0) {
+                        categories.value = res.data.data;
+                    }
+                });
+            }
+
+            function fetchCategoryDetail(categoryId) {
+                categoryLoading.value = true;
+                categoryInfo.value = null;
+                categoryModels.value = [];
+                axios.get('/api/categories/' + categoryId).then(function(res) {
+                    if (res.data.code === 0) {
+                        categoryInfo.value = res.data.data.category;
+                        categoryModels.value = res.data.data.models;
+                    }
+                }).finally(function() { categoryLoading.value = false; });
+            }
+
+            function onCategoryChange(catId) {
+                activeCategory.value = catId;
+                if (catId === null) {
+                    // 切回全部视图
+                    fetchModels();
+                } else {
+                    fetchCategoryDetail(catId);
+                }
+            }
+
+            function onTypeFilter(val) {
+                filter.type = val;
+                fetchModels();
+            }
+
+            function onProviderFilter(val) {
+                filter.provider = val;
+                fetchModels();
+            }
+
+            onMounted(function() {
+                fetchModels();
+                fetchProviders();
+                fetchCategories();
+            });
+
+            return {
+                loading, models, providers, filter, typeOptions,
+                categories, activeCategory, categoryLoading, categoryInfo, categoryModels,
+                typeLabel, typeTheme, formatPrice,
+                fetchModels, onTypeFilter, onProviderFilter, onCategoryChange
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>

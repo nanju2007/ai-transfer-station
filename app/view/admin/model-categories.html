@@ -1,0 +1,376 @@
+<?php include __DIR__ . '/header.html'; ?>
+
+<div id="page-app">
+    <!-- 工具栏 -->
+    <div class="toolbar">
+        <t-input v-model="searchKeyword" placeholder="搜索分类名称" style="width: 240px;" @enter="fetchList" clearable></t-input>
+        <t-select v-model="searchStatus" placeholder="状态筛选" style="width: 120px;" clearable @change="fetchList">
+            <t-option :value="1" label="启用"></t-option>
+            <t-option :value="0" label="禁用"></t-option>
+        </t-select>
+        <t-button theme="primary" @click="fetchList">搜索</t-button>
+        <div class="spacer"></div>
+        <t-button theme="primary" @click="openCreate">新增分类</t-button>
+    </div>
+
+    <!-- 分类表格 -->
+    <div class="content-card">
+        <t-table :data="tableData" :columns="columns" :loading="loading" row-key="id" :bordered="true" size="small">
+            <template #icon="{ row }">
+                <span v-if="row.icon">{{ row.icon }}</span>
+                <span v-else style="color:#999;">-</span>
+            </template>
+            <template #status="{ row }">
+                <t-switch :value="row.status" :custom-value="[1, 0]" @change="handleStatusChange(row, $event)" size="small"></t-switch>
+            </template>
+            <template #channel_count="{ row }">
+                <t-tag theme="primary" variant="light">{{ row.channel_count || 0 }}</t-tag>
+            </template>
+            <template #operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openEdit(row)">编辑</t-link>
+                    <t-link theme="primary" @click="openChannelDrawer(row)">管理渠道</t-link>
+                    <t-popconfirm content="确定删除该分类？" @confirm="handleDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+        <div class="pagination">
+            <t-pagination v-model="pagination.current" :total="pagination.total" :page-size="pagination.pageSize"
+                @current-change="onPageChange" show-jumper></t-pagination>
+        </div>
+    </div>
+
+    <!-- 新增/编辑分类对话框 -->
+    <t-dialog v-model:visible="dialogVisible" :header="dialogTitle" width="520px" :confirm-on-enter="false"
+        @confirm="handleSubmit" :confirm-btn="{ loading: submitting }">
+        <t-form :data="formData" label-width="80px">
+            <t-form-item label="名称" name="name">
+                <t-input v-model="formData.name" placeholder="请输入分类名称"></t-input>
+            </t-form-item>
+            <t-form-item label="描述" name="description">
+                <t-input v-model="formData.description" placeholder="分类描述（可选）"></t-input>
+            </t-form-item>
+            <t-form-item label="图标" name="icon">
+                <t-input v-model="formData.icon" placeholder="emoji 或图标名（可选）"></t-input>
+            </t-form-item>
+            <t-form-item label="排序" name="sort_order">
+                <t-input-number v-model="formData.sort_order" :min="0" style="width: 100%;"></t-input-number>
+            </t-form-item>
+            <t-form-item label="状态" name="status">
+                <t-switch v-model="formData.status" :custom-value="[1, 0]"></t-switch>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+
+    <!-- 渠道绑定管理抽屉 -->
+    <t-drawer v-model:visible="drawerVisible" :header="'管理渠道 - ' + (currentCategory ? currentCategory.name : '')" size="75%" :footer="false">
+        <div class="toolbar" style="margin-bottom: 12px;">
+            <div class="spacer"></div>
+            <t-button theme="primary" @click="openChannelCreate">添加渠道绑定</t-button>
+        </div>
+        <t-table :data="channelTableData" :columns="channelColumns" :loading="channelLoading" row-key="id" :bordered="true" size="small">
+            <template #channel_name="{ row }">
+                <span v-if="row.channel">{{ row.channel.name }}</span>
+                <span v-else style="color:#999;">渠道已删除</span>
+            </template>
+            <template #custom_input_price="{ row }">
+                <span v-if="row.custom_input_price !== null && row.custom_input_price !== ''">{{ row.custom_input_price }} 元/千tokens</span>
+                <span v-else style="color:#999;">默认</span>
+            </template>
+            <template #custom_output_price="{ row }">
+                <span v-if="row.custom_output_price !== null && row.custom_output_price !== ''">{{ row.custom_output_price }} 元/千tokens</span>
+                <span v-else style="color:#999;">默认</span>
+            </template>
+            <template #ch_status="{ row }">
+                <t-tag v-if="row.status === 1" theme="success" variant="light">启用</t-tag>
+                <t-tag v-else theme="danger" variant="light">禁用</t-tag>
+            </template>
+            <template #ch_operation="{ row }">
+                <t-space size="small">
+                    <t-link theme="primary" @click="openChannelEdit(row)">编辑</t-link>
+                    <t-popconfirm content="确定删除该渠道绑定？" @confirm="handleChannelDelete(row)">
+                        <t-link theme="danger">删除</t-link>
+                    </t-popconfirm>
+                </t-space>
+            </template>
+        </t-table>
+    </t-drawer>
+
+    <!-- 添加/编辑渠道绑定对话框 -->
+    <t-dialog v-model:visible="channelDialogVisible" :header="channelDialogTitle" width="560px" :confirm-on-enter="false"
+        @confirm="handleChannelSubmit" :confirm-btn="{ loading: channelSubmitting }">
+        <t-form :data="channelFormData" label-width="120px">
+            <t-form-item label="渠道" name="channel_id">
+                <t-select v-model="channelFormData.channel_id" placeholder="请选择渠道" filterable :loading="channelListLoading">
+                    <t-option v-for="ch in channelOptions" :key="ch.id" :value="ch.id" :label="ch.name"></t-option>
+                </t-select>
+            </t-form-item>
+            <t-form-item label="模型名称" name="model_name">
+                <t-input v-model="channelFormData.model_name" placeholder="如 gpt-4o, claude-3-5-sonnet"></t-input>
+            </t-form-item>
+            <t-form-item label="优先级" name="priority">
+                <t-input-number v-model="channelFormData.priority" :min="0" style="width: 100%;"></t-input-number>
+            </t-form-item>
+            <t-form-item label="权重" name="weight">
+                <t-input-number v-model="channelFormData.weight" :min="1" style="width: 100%;"></t-input-number>
+            </t-form-item>
+            <t-form-item label="自定义输入价格" name="custom_input_price">
+                <t-input v-model="channelFormData.custom_input_price" placeholder="留空使用默认价格" suffix="元/千tokens"></t-input>
+            </t-form-item>
+            <t-form-item label="自定义输出价格" name="custom_output_price">
+                <t-input v-model="channelFormData.custom_output_price" placeholder="留空使用默认价格" suffix="元/千tokens"></t-input>
+            </t-form-item>
+            <t-form-item label="状态" name="status">
+                <t-switch v-model="channelFormData.status" :custom-value="[1, 0]"></t-switch>
+            </t-form-item>
+        </t-form>
+    </t-dialog>
+</div>
+
+<script>
+(function() {
+    const { createApp, ref, reactive, onMounted } = Vue;
+    const app = createApp({
+        setup() {
+            // ========== 分类管理 ==========
+            const loading = ref(false);
+            const submitting = ref(false);
+            const tableData = ref([]);
+            const searchKeyword = ref('');
+            const searchStatus = ref(null);
+            const dialogVisible = ref(false);
+            const dialogTitle = ref('新增分类');
+            const editingId = ref(null);
+
+            const pagination = reactive({ current: 1, total: 0, pageSize: 20 });
+
+            const defaultForm = { name: '', description: '', icon: '', sort_order: 0, status: 1 };
+            const formData = reactive({ ...defaultForm });
+
+            const columns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'name', title: '名称', width: 160 },
+                { colKey: 'icon', title: '图标', width: 80, cell: 'icon' },
+                { colKey: 'description', title: '描述', ellipsis: true },
+                { colKey: 'sort_order', title: '排序', width: 80 },
+                { colKey: 'status', title: '状态', width: 80, cell: 'status' },
+                { colKey: 'channel_count', title: '渠道数量', width: 100, cell: 'channel_count' },
+                { colKey: 'operation', title: '操作', width: 200, cell: 'operation', fixed: 'right' }
+            ];
+
+            function fetchList() {
+                loading.value = true;
+                var params = { page: pagination.current, page_size: pagination.pageSize };
+                if (searchKeyword.value) params.keyword = searchKeyword.value;
+                if (searchStatus.value !== null && searchStatus.value !== undefined) params.status = searchStatus.value;
+
+                axios.get('/api/admin/model-categories/list', { params: params }).then(function(res) {
+                    if (res.data.code === 0) {
+                        tableData.value = res.data.data.list;
+                        pagination.total = res.data.data.total;
+                    }
+                }).finally(function() { loading.value = false; });
+            }
+
+            function onPageChange(page) {
+                pagination.current = page;
+                fetchList();
+            }
+
+            function openCreate() {
+                Object.assign(formData, defaultForm);
+                editingId.value = null;
+                dialogTitle.value = '新增分类';
+                dialogVisible.value = true;
+            }
+
+            function openEdit(row) {
+                editingId.value = row.id;
+                dialogTitle.value = '编辑分类';
+                Object.keys(defaultForm).forEach(function(k) {
+                    formData[k] = row[k] !== undefined && row[k] !== null ? row[k] : defaultForm[k];
+                });
+                dialogVisible.value = true;
+            }
+
+            function handleSubmit() {
+                if (!formData.name) {
+                    TDesign.MessagePlugin.warning('请填写分类名称');
+                    return;
+                }
+                submitting.value = true;
+                var data = { ...formData };
+                if (editingId.value) data.id = editingId.value;
+
+                axios.post('/api/admin/model-categories/save', data).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(editingId.value ? '更新成功' : '创建成功');
+                        dialogVisible.value = false;
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { submitting.value = false; });
+            }
+
+            function handleDelete(row) {
+                axios.post('/api/admin/model-categories/delete', { id: row.id }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            function handleStatusChange(row, val) {
+                axios.post('/api/admin/model-categories/update-status', { id: row.id, status: val }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('状态更新成功');
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                });
+            }
+
+            // ========== 渠道绑定管理 ==========
+            const drawerVisible = ref(false);
+            const currentCategory = ref(null);
+            const channelLoading = ref(false);
+            const channelTableData = ref([]);
+            const channelDialogVisible = ref(false);
+            const channelDialogTitle = ref('添加渠道绑定');
+            const channelSubmitting = ref(false);
+            const channelEditingId = ref(null);
+            const channelOptions = ref([]);
+            const channelListLoading = ref(false);
+
+            const defaultChannelForm = {
+                channel_id: null, model_name: '', priority: 0, weight: 1,
+                custom_input_price: '', custom_output_price: '', status: 1
+            };
+            const channelFormData = reactive({ ...defaultChannelForm });
+
+            const channelColumns = [
+                { colKey: 'id', title: 'ID', width: 70 },
+                { colKey: 'channel_name', title: '渠道名称', width: 160, cell: 'channel_name' },
+                { colKey: 'model_name', title: '模型名称', width: 180 },
+                { colKey: 'priority', title: '优先级', width: 80 },
+                { colKey: 'weight', title: '权重', width: 80 },
+                { colKey: 'custom_input_price', title: '输入价格', width: 150, cell: 'custom_input_price' },
+                { colKey: 'custom_output_price', title: '输出价格', width: 150, cell: 'custom_output_price' },
+                { colKey: 'status', title: '状态', width: 80, cell: 'ch_status' },
+                { colKey: 'operation', title: '操作', width: 130, cell: 'ch_operation', fixed: 'right' }
+            ];
+
+            function openChannelDrawer(row) {
+                currentCategory.value = row;
+                drawerVisible.value = true;
+                fetchChannelList();
+            }
+
+            function fetchChannelList() {
+                if (!currentCategory.value) return;
+                channelLoading.value = true;
+                axios.get('/api/admin/model-categories/channels', { params: { category_id: currentCategory.value.id } }).then(function(res) {
+                    if (res.data.code === 0) {
+                        channelTableData.value = res.data.data.list;
+                    }
+                }).finally(function() { channelLoading.value = false; });
+            }
+
+            function fetchChannelOptions() {
+                channelListLoading.value = true;
+                axios.get('/api/admin/channels', { params: { per_page: 1000 } }).then(function(res) {
+                    if (res.data.code === 0) {
+                        channelOptions.value = res.data.data.list;
+                    }
+                }).finally(function() { channelListLoading.value = false; });
+            }
+
+            function openChannelCreate() {
+                Object.assign(channelFormData, defaultChannelForm);
+                channelEditingId.value = null;
+                channelDialogTitle.value = '添加渠道绑定';
+                channelDialogVisible.value = true;
+                if (channelOptions.value.length === 0) fetchChannelOptions();
+            }
+
+            function openChannelEdit(row) {
+                channelEditingId.value = row.id;
+                channelDialogTitle.value = '编辑渠道绑定';
+                Object.keys(defaultChannelForm).forEach(function(k) {
+                    channelFormData[k] = row[k] !== undefined && row[k] !== null ? row[k] : defaultChannelForm[k];
+                });
+                // 价格字段空值处理
+                if (channelFormData.custom_input_price === null) channelFormData.custom_input_price = '';
+                if (channelFormData.custom_output_price === null) channelFormData.custom_output_price = '';
+                channelDialogVisible.value = true;
+                if (channelOptions.value.length === 0) fetchChannelOptions();
+            }
+
+            function handleChannelSubmit() {
+                if (!channelFormData.channel_id && !channelEditingId.value) {
+                    TDesign.MessagePlugin.warning('请选择渠道');
+                    return;
+                }
+                channelSubmitting.value = true;
+                var data = { ...channelFormData, category_id: currentCategory.value.id };
+                if (channelEditingId.value) data.id = channelEditingId.value;
+                // 空字符串价格转为null
+                if (data.custom_input_price === '') data.custom_input_price = null;
+                if (data.custom_output_price === '') data.custom_output_price = null;
+
+                axios.post('/api/admin/model-categories/save-channel', data).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success(channelEditingId.value ? '更新成功' : '创建成功');
+                        channelDialogVisible.value = false;
+                        fetchChannelList();
+                        fetchList(); // 刷新分类列表的渠道数量
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '操作失败');
+                    }
+                }).catch(function(err) {
+                    TDesign.MessagePlugin.error(err.response?.data?.msg || '请求失败');
+                }).finally(function() { channelSubmitting.value = false; });
+            }
+
+            function handleChannelDelete(row) {
+                axios.post('/api/admin/model-categories/delete-channel', { id: row.id }).then(function(res) {
+                    if (res.data.code === 0) {
+                        TDesign.MessagePlugin.success('删除成功');
+                        fetchChannelList();
+                        fetchList();
+                    } else {
+                        TDesign.MessagePlugin.error(res.data.msg || '删除失败');
+                    }
+                });
+            }
+
+            onMounted(function() { fetchList(); });
+
+            return {
+                // 分类管理
+                loading, submitting, tableData, columns, searchKeyword, searchStatus,
+                pagination, dialogVisible, dialogTitle, formData,
+                fetchList, onPageChange, openCreate, openEdit, handleSubmit, handleDelete, handleStatusChange,
+                // 渠道绑定管理
+                drawerVisible, currentCategory, channelLoading, channelTableData, channelColumns,
+                channelDialogVisible, channelDialogTitle, channelSubmitting, channelFormData,
+                channelOptions, channelListLoading,
+                openChannelDrawer, openChannelCreate, openChannelEdit, handleChannelSubmit, handleChannelDelete
+            };
+        }
+    });
+    app.use(TDesign);
+    app.mount('#page-app');
+})();
+</script>
+
+<?php include __DIR__ . '/footer.html'; ?>
